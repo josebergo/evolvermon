@@ -1,0 +1,14 @@
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #F4E8DA;              /* 暖沙色布局底 */
+  color: #26160B;                   /* 深褐近黑正文，高对比 */
+}
+::selection { background: #F3C08B; }
+
+/* PDA 大按钮模式 */
+.pda-btn { min-height: 56px !important; font-size: 18px !important; }
+
+/* 表格斑马纹与悬停（暖色） */
+.ant-table-tbody > tr:nth-child(even) > td { background: #FCF3E8 !important; }
+.ant-table-tbody > tr:hover > td { background: #F6E2CB !important; }

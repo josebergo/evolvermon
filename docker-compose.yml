@@ -1,0 +1,41 @@
+# EvolverMon 一键部署（NFR-020 形态①：单机 Docker Compose）
+# 使用：docker compose up -d --build
+# 访问：http://localhost
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evolver
+      POSTGRES_PASSWORD: evolver_pass_change_me
+      POSTGRES_DB: evolvermon
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolver -d evolvermon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    environment:
+      EM_DATABASE_DSN: "host=db port=5432 user=evolver password=evolver_pass_change_me dbname=evolvermon sslmode=disable TimeZone=Asia/Shanghai"
+      EM_JWT_SECRET: "change-me-to-a-random-64-char-string"
+      EM_SEED_DEMO: "true"
+      EM_HTTP_ADDR: ":8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:

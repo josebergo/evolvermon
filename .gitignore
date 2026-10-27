@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.local
+.env
+backend/evolvermon
+backend/evolvermon.exe
+.pm-skills/
+*.log
+.verify.log
+webhook-received.log
+.pgsql/
+.DS_Store
+
+# 设计初稿类文档（不公开：调研过程稿/商业策略/内部交付计划），仓库仅保留功能设计文档
+docs/00-research/
+docs/01-strategy/
+docs/04-delivery/
+*.exe~
