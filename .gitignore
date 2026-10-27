@@ -16,3 +16,4 @@ docs/00-research/
 docs/01-strategy/
 docs/04-delivery/
 *.exe~
+backend/data/
