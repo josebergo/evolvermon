@@ -1,5 +1,7 @@
 # EvolverMon · 开源工业一体化管理平台（ERP + MES + WMS）
 
+**简体中文** | [English](README.en.md)
+
 > **一句话**：用 Go 的性能 + React 的体验，让中小制造企业 5 分钟跑通「销售订单 → MRP → 工单 → 报工 → 质检 → 入库 → 发货」全流程闭环。多工厂多租户 · PostgreSQL · Apache-2.0 免费商用 · 暖色高对比 UI。
 
 技术栈：Go 1.27 + Gin + GORM · React 18 + TypeScript + Vite + Ant Design 5 · PostgreSQL 16
