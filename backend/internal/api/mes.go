@@ -164,7 +164,7 @@ func (m *MesAPI) ForceFinish(c *gin.Context) {
 	now := time.Now()
 	err := m.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.WoOperation{}).Where("work_order_id=? AND status IN ('waiting','assigned','running')", wo.ID).
-			Update("status", model.OpDone).Error; err != nil {
+			Updates(map[string]any{"status": model.OpDone, "ended_at": now}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&model.WorkOrder{}).Where("id=? AND version=?", wo.ID, wo.Version).
@@ -486,12 +486,13 @@ func (m *MesAPI) Report(c *gin.Context) {
 		if wo.Status == model.WoReleased {
 			woNext = model.WoRunning
 		}
-		// 工序与工单累计原子自增（NFR-001 高并发路径：无长事务）
+		// 工序与工单累计原子自增（NFR-001 高并发路径：无长事务）；A6：报工即落工序结束时间
 		if err := tx.Model(&model.WoOperation{}).Where("id=?", req.OperationID).
 			Updates(map[string]any{
 				"qty_ok":     gorm.Expr("qty_ok+?", req.QtyOk),
 				"qty_defect": gorm.Expr("qty_defect+?", req.QtyDefect),
 				"status":     opNext,
+				"ended_at":   rep.ReportedAt,
 			}).Error; err != nil {
 			return err
 		}
@@ -575,6 +576,10 @@ func (m *MesAPI) AuditQc(c *gin.Context) {
 		response.Fail(c, err)
 		return
 	}
+	// FR-WMS-025 联动：合格或让步放行 → 待检量转可用
+	if req.Result == "pass" || req.Result == "concession" {
+		m.releasePending(ac, rec, "on_hand", "检验放行转可用")
+	}
 	data.Audit(m.DB, ac, c.ClientIP(), "qc-audit", "qc_record", rec.DocNo, rec.DocNo, "", req.Result)
 	events.Publish(m.DB, ac.TenantID, "qc.audited", gin.H{"docNo": rec.DocNo, "result": req.Result, "disposal": req.Disposal})
 	response.OK2(c, gin.H{"ok": true})
@@ -606,4 +611,114 @@ func (m *MesAPI) loadWO(c *gin.Context, ac *middleware.AuthCtx) (*model.WorkOrde
 		return nil, false
 	}
 	return &wo, true
+}
+
+// ReturnMaterial A5 退料（FR-MES-005）：按已领净量生成退料入库草稿（默认全额，可改量）。
+func (m *MesAPI) ReturnMaterial(c *gin.Context) {
+	ac := middleware.GetAuth(c)
+	wo, ok := m.loadWO(c, ac)
+	if !ok {
+		return
+	}
+	if wo.Status != model.WoReleased && wo.Status != model.WoRunning && wo.Status != model.WoPaused &&
+		wo.Status != model.WoFinished && wo.Status != model.WoStored {
+		response.Fail(c, response.NewBiz(response.ErrBadState, "工单状态不允许退料"))
+		return
+	}
+	// 已领净量 = 领料过账量 − 已退量（按物料汇总）
+	type row struct {
+		MaterialID int64
+		Picked     float64
+	}
+	var rows []row
+	m.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) AS picked
+		FROM stock_order_lines l
+		JOIN stock_orders o ON o.id=l.stock_order_id
+		WHERE o.tenant_id=? AND o.source_type='picking' AND o.source_doc_id=? AND o.status='done'
+		GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rows)
+	var rets []row
+	m.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) AS picked
+		FROM stock_order_lines l
+		JOIN stock_orders o ON o.id=l.stock_order_id
+		WHERE o.tenant_id=? AND o.source_type='return' AND o.source_doc_id=? AND o.status IN ('done','doing')
+		GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rets)
+	returned := map[int64]float64{}
+	for _, r := range rets {
+		returned[r.MaterialID] = r.Picked
+	}
+	var wh model.Warehouse
+	if err := m.DB.Scopes(data.ScopeFor(ac, true)).Where("type='raw' AND status=1").First(&wh).Error; err != nil {
+		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置原料仓"))
+		return
+	}
+	docNo, _ := data.NextDocNo(m.DB, ac.TenantID, "RCV")
+	order := model.StockOrder{
+		DocType: model.DocRCV, WarehouseID: wh.ID, SourceType: "return",
+		SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo,
+		Remark: "工单退料",
+	}
+	order.TenantID = ac.TenantID
+	order.FactoryID = &ac.FactoryID
+	order.DocNo = docNo
+	// 批次物料退料需回原批次：取该工单最近一次领料出库流水的批次
+	lastBatch := map[int64]string{}
+	var moves []model.StockMovement
+	m.DB.Raw(`SELECT DISTINCT ON (material_id) material_id, batch_no
+		FROM stock_movements WHERE tenant_id=? AND biz_type='领料出库'
+		AND source_doc_id IN (SELECT id FROM stock_orders WHERE source_type='picking' AND source_doc_id=?)
+		ORDER BY material_id, id DESC`, ac.TenantID, wo.ID).Scan(&moves)
+	for _, mv := range moves {
+		lastBatch[mv.MaterialID] = mv.BatchNo
+	}
+
+	no := 0
+	err := m.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&order).Error; err != nil {
+			return err
+		}
+		for _, r := range rows {
+			remain := r.Picked - returned[r.MaterialID]
+			if remain <= 1e-9 {
+				continue
+			}
+			no++
+			if err := tx.Create(&model.StockOrderLine{
+				StockOrderID: order.ID, LineNo: no, MaterialID: r.MaterialID, Qty: remain,
+				BatchNo: lastBatch[r.MaterialID],
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	data.Audit(m.DB, ac, c.ClientIP(), "return-material", "work_order", wo.DocNo, wo.DocNo, "", order.DocNo)
+	response.OK2(c, order)
+}
+
+// releasePending 将质检单对应的待检量转入目标桶（on_hand/defective），无待检量时静默跳过（兼容历史数据）。
+func (m *MesAPI) releasePending(ac *middleware.AuthCtx, rec model.QcRecord, to, bizType string) {
+	if rec.SourceDocType != "stock_order" || rec.SourceDocID == 0 {
+		return
+	}
+	var order model.StockOrder
+	if err := m.DB.First(&order, rec.SourceDocID).Error; err != nil {
+		return
+	}
+	factoryID := ac.FactoryID
+	if order.FactoryID != nil {
+		factoryID = *order.FactoryID
+	}
+	var stock model.Stock
+	if err := m.DB.Where("tenant_id=? AND factory_id=? AND warehouse_id=? AND material_id=? AND batch_no=?",
+		ac.TenantID, factoryID, order.WarehouseID, rec.MaterialID, rec.BatchNo).
+		First(&stock).Error; err != nil || stock.QtyPending < rec.Qty-1e-9 {
+		return // 无待检量：历史/非隔离路径，跳过
+	}
+	wms := WmsAPI{DB: m.DB}
+	_ = wms.TransferBucket(m.DB, ac, order.WarehouseID, model.StockOrderLine{MaterialID: rec.MaterialID},
+		rec.BatchNo, rec.Qty, "pending", to, bizType, rec.DocNo)
 }

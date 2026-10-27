@@ -164,3 +164,16 @@ type IdempotencyKey struct {
 	ResponseBody   string    `json:"responseBody"`
 	CreatedAt      time.Time `gorm:"index" json:"createdAt"`
 }
+
+// Attachment 单据附件（总册 7.3.1）：本地磁盘存储，EM_DATA_DIR 可改。
+type Attachment struct {
+	ID         int64     `gorm:"primaryKey" json:"id"`
+	TenantID   int64     `gorm:"index" json:"tenantId"`
+	ObjectType string    `gorm:"size:32;index:idx_attach,priority:1" json:"objectType"` // stock_order / work_order / sales_order …
+	ObjectID   int64     `gorm:"index:idx_attach,priority:2" json:"objectId"`
+	FileName   string    `gorm:"size:256" json:"fileName"`
+	StoredPath string    `gorm:"size:512" json:"-"`
+	Size       int64     `json:"size"`
+	UploadedBy int64     `json:"uploadedBy"`
+	CreatedAt  time.Time `json:"createdAt"`
+}

@@ -35,7 +35,7 @@ npm install && npm run dev
 ### 端到端自动验证
 
 ```bash
-bash scripts/verify-golden-path.sh [base_url]   # 49 项断言：M1–M6 全链路 + 越权矩阵
+bash scripts/verify-golden-path.sh [base_url]   # 64 项断言：M1–M6 全链路 + 缺口补齐 + 越权矩阵
 bash scripts/load-report.sh [base_url] 200      # 200 并发报工压测（基线 P99=32ms）
 ```
 
@@ -60,7 +60,7 @@ bash scripts/load-report.sh [base_url] 200      # 200 并发报工压测（基�
 - **集成与智能**：Webhook 事件出口（HMAC 签名/重试/投递日志）、财务凭证导出（应收应付/CSV）、智能建议（缺料/交期/产能）
 - **PDA**：大按钮触屏的报工页 + 仓储作业页（收货/领料）
 
-版本细节见 [CHANGELOG.md](CHANGELOG.md)。质量基线：金路径 **49/49**、账实对账 0 差异、200 并发报工 **P99=32ms**。
+版本细节见 [CHANGELOG.md](CHANGELOG.md)。质量基线：金路径 **64/64**、三桶库存对账 0 差异（可用/待检/不良）、200 并发报工 **P99=32ms**、GitHub Actions CI（vet/test/构建/e2e）。
 
 ## 项目结构
 

@@ -36,7 +36,7 @@ npm install && npm run dev
 ### End-to-end automated verification
 
 ```bash
-bash scripts/verify-golden-path.sh [base_url]   # 49 assertions: full M1–M6 chain + privilege matrix
+bash scripts/verify-golden-path.sh [base_url]   # 64 assertions: full M1–M6 chain + gap fixes + privilege matrix
 bash scripts/load-report.sh [base_url] 200      # 200-concurrent reporting load test (baseline P99 = 32ms)
 ```
 
@@ -61,7 +61,7 @@ bash scripts/load-report.sh [base_url] 200      # 200-concurrent reporting load 
 - **Integration & intelligence**: webhook event outlet (HMAC signature, retries, delivery log), AR/AP voucher export (CSV) for external finance systems, heuristic advisor (shortage / due-date / capacity)
 - **PDA**: large-button touch pages for shop-floor reporting and warehouse ops (receiving / picking)
 
-Details per release: [CHANGELOG.md](CHANGELOG.md). Quality baseline: golden path **49/49**, ledger reconciliation 0 diff, 200-concurrent reporting **P99 = 32ms**.
+Details per release: [CHANGELOG.md](CHANGELOG.md). Quality baseline: golden path **64/64**, three-bucket stock reconciliation 0 diff (on-hand/pending/defective), 200-concurrent reporting **P99 = 32ms**, GitHub Actions CI (vet/test/build/e2e).
 
 ## Project Structure
 

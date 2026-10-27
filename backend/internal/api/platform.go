@@ -3,9 +3,11 @@ package api
 // 平台扩展：角色授权、用户角色、参数、审计查询、工作台/看板（FR-PLT-050~063, FR-MES-050~051）。
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
 	"github.com/evolvermon/evolvermon/internal/data"
@@ -155,4 +157,155 @@ func (p *PlatformAPI) PermList(c *gin.Context) {
 		out = append(out, perm{Code: m.PermCode, Name: m.Name + "（" + m.PermCode + "）"})
 	}
 	response.OK2(c, out)
+}
+
+// ---- A1 租户管理（FR-PLT-001~006，仅超管） ----
+
+func (p *PlatformAPI) ListTenants(c *gin.Context) {
+	var tenants []model.Tenant
+	q := p.DB.Model(&model.Tenant{})
+	if v := c.Query("q"); v != "" {
+		q = q.Where("name ILIKE ? OR code ILIKE ?", "%"+v+"%", "%"+v+"%")
+	}
+	var total int64
+	q.Count(&total)
+	q.Order("id DESC").Limit(100).Find(&tenants)
+	response.Page(c, tenants, total)
+}
+
+func (p *PlatformAPI) CreateTenant(c *gin.Context) {
+	ac := middleware.GetAuth(c)
+	if !ac.IsSuper {
+		response.Fail(c, response.NewBiz(response.ErrForbidden, "仅超级管理员可创建租户"))
+		return
+	}
+	var t model.Tenant
+	if err := c.ShouldBindJSON(&t); err != nil || t.Code == "" || t.Name == "" {
+		response.Fail(c, response.NewBiz(response.ErrParam, "code/name 必填"))
+		return
+	}
+	t.Status = 1
+	if err := p.DB.Create(&t).Error; err != nil {
+		response.Fail(c, response.NewBiz(response.ErrBiz, "创建失败（编码重复？）："+err.Error()))
+		return
+	}
+	// FR-PLT-003：租户级参数模板初始化
+	p.DB.Create(&model.DocNumberRule{TenantID: t.ID, DocType: "SO", Prefix: "SO", SeqLen: 4})
+	p.DB.Create(&model.SysParam{TenantID: t.ID, Key: "allow_negative_stock", Value: `"false"`, Remark: "允许负库存"})
+	data.Audit(p.DB, ac, c.ClientIP(), "create", "tenant", t.Code, t.Name, "", "active")
+	response.OK2(c, t)
+}
+
+// UpdateTenant 停用/启用/编辑（FR-PLT-004：停用后其用户拒绝登录）。
+func (p *PlatformAPI) UpdateTenant(c *gin.Context) {
+	ac := middleware.GetAuth(c)
+	if !ac.IsSuper {
+		response.Fail(c, response.NewBiz(response.ErrForbidden, "仅超级管理员可管理租户"))
+		return
+	}
+	var t model.Tenant
+	if err := p.DB.First(&t, c.Param("id")).Error; err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, "租户不存在"))
+		return
+	}
+	var req struct {
+		Name         string     `json:"name"`
+		Status       *int16     `json:"status"`
+		ExpiredAt    *time.Time `json:"expiredAt"`
+		ContactName  string     `json:"contactName"`
+		ContactPhone string     `json:"contactPhone"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	ups := map[string]any{}
+	if req.Name != "" {
+		ups["name"] = req.Name
+	}
+	if req.Status != nil {
+		ups["status"] = *req.Status
+	}
+	if req.ExpiredAt != nil {
+		ups["expired_at"] = req.ExpiredAt
+	}
+	if req.ContactName != "" {
+		ups["contact_name"] = req.ContactName
+	}
+	if req.ContactPhone != "" {
+		ups["contact_phone"] = req.ContactPhone
+	}
+	if len(ups) > 0 {
+		p.DB.Model(&model.Tenant{}).Where("id=?", t.ID).Updates(ups)
+	}
+	data.Audit(p.DB, ac, c.ClientIP(), "update", "tenant", t.Code, t.Name, "", fmt.Sprintf("%v", ups))
+	response.OK2(c, gin.H{"ok": true})
+}
+
+// ---- A2 单号规则配置（FR-PLT-061） ----
+
+func (p *PlatformAPI) ListDocRules(c *gin.Context) {
+	ac := middleware.GetAuth(c)
+	var rules []model.DocNumberRule
+	p.DB.Where("tenant_id=?", ac.TenantID).Order("doc_type").Find(&rules)
+	response.OK2(c, rules)
+}
+
+func (p *PlatformAPI) UpdateDocRule(c *gin.Context) {
+	ac := middleware.GetAuth(c)
+	var rule model.DocNumberRule
+	if err := p.DB.Where("tenant_id=?", ac.TenantID).First(&rule, c.Param("id")).Error; err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, "规则不存在"))
+		return
+	}
+	var req struct {
+		Prefix         string `json:"prefix"`
+		SeqLen         int    `json:"seqLen"`
+		HasFactoryCode *bool  `json:"hasFactoryCode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	ups := map[string]any{}
+	if req.Prefix != "" {
+		ups["prefix"] = req.Prefix
+	}
+	if req.SeqLen >= 3 && req.SeqLen <= 8 {
+		ups["seq_len"] = req.SeqLen
+	}
+	if req.HasFactoryCode != nil {
+		ups["has_factory_code"] = *req.HasFactoryCode
+	}
+	if len(ups) > 0 {
+		p.DB.Model(&model.DocNumberRule{}).Where("id=?", rule.ID).Updates(ups)
+	}
+	data.Audit(p.DB, ac, c.ClientIP(), "update", "doc_number_rule", rule.DocType, rule.DocType, rule.Prefix, fmt.Sprintf("%v", ups))
+	response.OK2(c, gin.H{"ok": true})
+}
+
+// ---- A3 管理员重置密码（FR-PLT-023） ----
+
+func (p *PlatformAPI) ResetPassword(c *gin.Context) {
+	ac := middleware.GetAuth(c)
+	var req struct {
+		NewPassword string `json:"newPassword" binding:"required,min=6"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, "新密码至少 6 位"))
+		return
+	}
+	var u model.User
+	if err := p.DB.Scopes(data.ScopeFor(ac, false)).First(&u, c.Param("id")).Error; err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, "用户不存在"))
+		return
+	}
+	if u.IsSuper && !ac.IsSuper {
+		response.Fail(c, response.NewBiz(response.ErrForbidden, "仅超管可重置超管密码"))
+		return
+	}
+	hash, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	p.DB.Model(&model.User{}).Where("id=?", u.ID).Update("password_hash", string(hash))
+	data.Audit(p.DB, ac, c.ClientIP(), "reset-password", "user", u.Username, u.Username, "", "")
+	response.OK2(c, gin.H{"ok": true})
 }

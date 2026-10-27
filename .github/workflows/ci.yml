@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: backend/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build -o evolvermon ./cmd/server
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./... || true # NFR-035：告警不阻断
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install deps
+        run: |
+          npm install-scripts approve esbuild || true
+          (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)
+          npm rebuild esbuild || true
+      - name: Build (tsc strict + vite)
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: evolvermon
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: backend/go.sum
+      - name: Build & start API
+        working-directory: backend
+        run: |
+          go build -o evolvermon ./cmd/server
+          EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon sslmode=disable" \
+          EM_JWT_SECRET=ci-secret EM_SEED_DEMO=true ./evolvermon &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/readyz && break || sleep 2; done
+      - name: Golden path verification (49+ assertions)
+        run: bash scripts/verify-golden-path.sh http://127.0.0.1:8080
+      - name: Concurrency baseline (NFR-001)
+        run: bash scripts/load-report.sh http://127.0.0.1:8080 100

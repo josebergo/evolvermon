@@ -55,6 +55,18 @@ func (a *AuthAPI) Login(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrAuth, "账号已停用"))
 		return
 	}
+	// FR-PLT-004：租户停用/过期后其用户拒绝登录
+	var tenant model.Tenant
+	if err := a.DB.First(&tenant, user.TenantID).Error; err == nil {
+		if tenant.Status != 1 {
+			response.Fail(c, response.NewBiz(response.ErrAuth, "所属租户已停用，请联系管理员"))
+			return
+		}
+		if tenant.ExpiredAt != nil && tenant.ExpiredAt.Before(time.Now()) {
+			response.Fail(c, response.NewBiz(response.ErrAuth, "所属租户已过期，请联系管理员"))
+			return
+		}
+	}
 	// 默认工厂
 	var fid int64
 	var uf model.UserFactory

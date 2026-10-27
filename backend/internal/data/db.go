@@ -57,6 +57,8 @@ func Migrate(db *gorm.DB) error {
 		&model.SerialNumber{},
 		// M6
 		&model.WebhookEndpoint{}, &model.WebhookDelivery{}, &model.DeviceTelemetry{},
+		// 补齐
+		&model.Attachment{},
 	)
 }
 
@@ -158,4 +160,21 @@ func Audit(db *gorm.DB, ac *middleware.AuthCtx, ip, action, objType, objID, objD
 	}).Error; err != nil {
 		log.Printf("audit write failed: %v", err)
 	}
+}
+
+// BoolParam 读取租户级布尔参数（jsonb 值兼容 true/false 与 "true"/"false"）。
+func BoolParam(db *gorm.DB, tenantID int64, key string) bool {
+	var p model.SysParam
+	if err := db.Where("tenant_id=? AND factory_id IS NULL AND key=?", tenantID, key).First(&p).Error; err != nil {
+		return false
+	}
+	var b bool
+	if err := json.Unmarshal([]byte(p.Value), &b); err == nil {
+		return b
+	}
+	var str string
+	if err := json.Unmarshal([]byte(p.Value), &str); err == nil {
+		return str == "true" || str == "1"
+	}
+	return false
 }

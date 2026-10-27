@@ -74,6 +74,15 @@ func (q *QualityAPI) Dispose(c *gin.Context) {
 		return
 	}
 
+	// 处置联动库存桶：返工 → 待检转可用（供返工单领用）；报废 → 待检转不良品
+	mesAPI := &MesAPI{DB: q.DB}
+	switch rec.Disposal {
+	case "rework":
+		mesAPI.releasePending(ac, rec, "on_hand", "返工处置转可用")
+	case "scrap":
+		mesAPI.releasePending(ac, rec, "defective", "报废转不良品")
+	}
+
 	switch rec.Disposal {
 	case "rework":
 		docNo, _ := data.NextDocNo(q.DB, ac.TenantID, "WO")

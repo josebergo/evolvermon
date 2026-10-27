@@ -2,6 +2,20 @@
 
 里程碑（M1–M6）与功能清单。每个 M 均以 `scripts/verify-golden-path.sh` 端到端验证通过为发布门槛。
 
+## v0.6.1（PRD 缺口补齐：A 级 13 项 + IQC 隔离 + 工程化）
+按 PRD 审计结论补齐全部 [M] 级缺口与关键工程债（验证断言 49 → 64）：
+- 平台管理 API：租户 CRUD（停用/过期拒绝登录）、单号规则配置、管理员重置密码（FR-PLT-001~004/061/023）
+- 停用校验：工厂/物料存在未完结单据禁止停用（FR-PLT-012 / FR-ERP-004）
+- 负库存参数生效：allow_negative_stock 开启时 FIFO 缺口落负账（总册 OQ-3）
+- 工序结束闭环：报工落 ended_at，强制完工关闭全部在制工序（FR-MES-022）
+- 工单退料：按已领净量生成退料入库单，自动回原批次，过账冲减已领量（FR-MES-005）
+- IQC 待检量隔离：三桶库存（可用/待检/不良）+ 分桶流水，合格转可用、报废转不良品、返工转可用（FR-WMS-025）；三桶流水重算对账 0 差异
+- 版本化迁移：schema_migrations + 增量 SQL 目录 + EM_MIGRATE_ONLY（NFR-021）
+- CI：GitHub Actions 三作业（backend vet/test/构建 + govulncheck、frontend 构建、PG 服务起金路径 e2e + 并发基线）（NFR-035）
+- 单据二维码：打印模板嵌入单号 QR，供 PDA 扫单（FR-WMS-060/061）
+- 货位冻结校验（FR-WMS-033）、单据附件上传/列表/下载（总册 7.3.1）、销售开单展示可承诺量（FR-ERP-053）、销售直发工单来源（FR-MES-001）
+- 修复：GORM Create 值传递 panic（桶间转移）、QC 判定 jsonb 空串静默失败（回归）
+
 ## v0.6（M6 · 生态与智能）
 - Webhook 事件出口：领域事件（工单下达/库存过账/质检判定/订单审核）后台投递，HMAC-SHA256 签名、重试 5 次、投递日志界面
 - 设备遥测接入（推送式网关接口）：`POST /devices/{code}/telemetry` + 最新值看板

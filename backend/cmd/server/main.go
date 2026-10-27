@@ -29,8 +29,13 @@ func main() {
 		log.Printf("waiting for database (%d/10)...", i)
 		time.Sleep(3 * time.Second)
 	}
-	if err := data.Migrate(db); err != nil {
+	version, err := data.MigrateVersioned(db)
+	if err != nil {
 		log.Fatalf("migrate failed: %v", err)
+	}
+	log.Printf("schema at version %d", version)
+	if os.Getenv("EM_MIGRATE_ONLY") == "1" {
+		return // 仅执行迁移（部署/CI 用）
 	}
 	if cfg.SeedDemo {
 		if err := seed.Run(db); err != nil {

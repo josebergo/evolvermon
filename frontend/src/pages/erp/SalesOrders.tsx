@@ -13,6 +13,7 @@ export default function SalesOrders() {
   const [mats, setMats] = useState<any[]>([])
   const [custs, setCusts] = useState<any[]>([])
   const [editing, setEditing] = useState<any>(null)
+  const [avail, setAvail] = useState<Record<number, number>>({})
   const [form] = Form.useForm()
   const [q, setQ] = useState('')
 
@@ -28,6 +29,12 @@ export default function SalesOrders() {
     const data = r ? { ...r } : { customerId: custs[0]?.id, lines: [{ qty: 1, price: 100 }] }
     setEditing(data)
     form.setFieldsValue(data)
+    // FR-ERP-053：开单展示可承诺量（现有−预占）
+    get('/stocks/available').then((rows: any) => {
+      const m: Record<number, number> = {}
+      for (const row of rows || []) m[row.materialId] = row.available
+      setAvail(m)
+    }).catch(() => {})
   }
 
   const save = async () => {
@@ -98,9 +105,9 @@ export default function SalesOrders() {
                 {fields.map((f) => (
                   <Space key={f.key} align="baseline" style={{ display: 'flex', marginBottom: 4 }}>
                     <Form.Item name={[f.name, 'materialId']} rules={[{ required: true, message: '选物料' }]} noStyle>
-                      <Select showSearch placeholder="物料" style={{ width: 300 }} optionFilterProp="label"
+                      <Select showSearch placeholder="物料" style={{ width: 340 }} optionFilterProp="label"
                         options={mats.filter((m) => m.category === 'finished' || m.category === 'semi')
-                          .map((m) => ({ value: m.id, label: `${m.code} ${m.name}` }))} />
+                          .map((m) => ({ value: m.id, label: `${m.code} ${m.name}（可用 ${avail[m.id] ?? 0}）` }))} />
                     </Form.Item>
                     <Form.Item name={[f.name, 'qty']} rules={[{ required: true }]} noStyle>
                       <InputNumber placeholder="数量" min={0.01} style={{ width: 110 }} />

@@ -274,6 +274,12 @@ func seedDemoMaster(db *gorm.DB, tenantID int64, f *model.Factory) {
 	db.Create(&model.RoutingOp{RoutingID: rtFG.ID, Seq: 20, Name: "整机测试", WorkCenterID: wcs[2].ID, PrepTimeSec: 300, RunTimePerUnitSec: 30})
 	db.Create(&model.RoutingOp{RoutingID: rtFG.ID, Seq: 30, Name: "包装", WorkCenterID: wcs[1].ID, PrepTimeSec: 120, RunTimePerUnitSec: 20})
 
+	// IQC 检验方案（RM-3001 全检）：触发采购到货「待检量隔离」演示路径
+	qcScheme := model.QcScheme{MaterialID: byCode["RM-3001"], CheckType: model.QcIQC, SampleRatio: 1,
+		Items: `[{"name":"外观","std":"无划伤","method":"目视"},{"name":"尺寸","std":"1.6±0.1mm","method":"卡尺"}]`}
+	qcScheme.TenantID = tenantID
+	db.Create(&qcScheme)
+
 	// 客商
 	cust := model.Customer{Code: "C0001", Name: "深圳智联家电", Contact: "张经理", Phone: "13900000001", CreditLimit: 200000, Status: 1}
 	supp := model.Supplier{Code: "S0001", Name: "东莞华强电子", Contact: "李经理", Phone: "13700000001", LeadTimeDays: 7, PaymentTerm: "月结 30 天", Status: 1}

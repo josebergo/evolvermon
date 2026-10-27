@@ -90,6 +90,7 @@ export default function WorkOrders() {
                 {['released', 'running'].includes(r.status) && (
                   <>
                     <a onClick={async () => { const o = await post(`/work-orders/${r.id}/picking-request`); message.success(`已生成领料单 ${o.docNos?.join('、') || o.docNo}（原料/半成品分仓）`) }}>领料</a>
+                    <a onClick={async () => { const o = await post(`/work-orders/${r.id}/return-material`); message.success(`已生成退料入库单 ${o.docNo}，过账后冲减已领量`) }}>退料</a>
                     {r.status === 'running' ? <a onClick={() => act(r, 'pause', '已暂停')}>暂停</a> : <a onClick={() => act(r, 'resume', '已恢复')}>恢复</a>}
                   </>
                 )}

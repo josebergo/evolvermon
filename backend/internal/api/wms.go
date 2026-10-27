@@ -185,13 +185,24 @@ func (w *WmsAPI) PostLines(c *gin.Context) {
 			if toLoc == nil {
 				toLoc = line.ToLocationID
 			}
+			hasIqc := tx.Model(&model.QcScheme{}).
+				Where("tenant_id=? AND material_id=? AND check_type='iqc'", ac.TenantID, line.MaterialID).
+				First(&model.QcScheme{}).Error == nil
+
 			switch order.DocType {
 			case model.DocRCV:
 				// 入库方向：批次物料必须明确批次（生成新批次或对上来源批次）
 				if mat.BatchManaged && batch == "" {
 					return response.NewBiz(response.ErrParam, mat.Name+" 启用批次管理，入库必须提供批次号")
 				}
-				if err := w.applyStock(tx, ac, order, line, batch, toLoc, +pl.Qty, "IN"); err != nil {
+				bucket := "on_hand"
+				bizNote := ""
+				// FR-WMS-025：配置 IQC 检验方案的采购到货先入「待检」，检验合格转可用
+				if hasIqc && order.SourceType == "purchase" {
+					bucket = "pending"
+					bizNote = "（待检）"
+				}
+				if err := w.applyStockAt2(tx, ac, order, line, batch, toLoc, +pl.Qty, "IN", bucket, bizNote); err != nil {
 					return err
 				}
 			case model.DocSHP:
@@ -231,8 +242,15 @@ func (w *WmsAPI) PostLines(c *gin.Context) {
 					remaining -= take
 				}
 				if remaining > 1e-9 {
-					return response.NewBiz(response.ErrStockOut,
-						fmt.Sprintf("行 %d 可用库存不足（缺 %s），禁止负库存", line.LineNo, f64(remaining)))
+					if !data.BoolParam(tx, ac.TenantID, "allow_negative_stock") {
+						return response.NewBiz(response.ErrStockOut,
+							fmt.Sprintf("行 %d 可用库存不足（缺 %s），禁止负库存（可在系统参数开启）", line.LineNo, f64(remaining)))
+					}
+					// 参数开启：缺口以无批次维度落负账（总册 OQ-3）
+					if err := w.applyStockAt(tx, ac, order, line, "", toLoc, -remaining, "OUT"); err != nil {
+						return err
+					}
+					remaining = 0
 				}
 			case model.DocMV:
 				// 移库 = 原货位出 + 目标货位入（简化：同仓库内）
@@ -279,8 +297,92 @@ func (w *WmsAPI) applyStock(tx *gorm.DB, ac *middleware.AuthCtx, order model.Sto
 	return w.applyStockAt(tx, ac, order, line, batch, loc, dirQty, direction)
 }
 
+// TransferBucket QC 联动桶间转移（FR-WMS-025/MES-043）：pending→on_hand / pending→defective。
+func (w *WmsAPI) TransferBucket(tx *gorm.DB, ac *middleware.AuthCtx, warehouseID int64, line model.StockOrderLine, batch string, qty float64, from, to, bizType, srcNo string) error {
+	var stock model.Stock
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("tenant_id=? AND factory_id=? AND warehouse_id=? AND material_id=? AND batch_no=?",
+			ac.TenantID, ac.FactoryID, warehouseID, line.MaterialID, batch).
+		First(&stock).Error
+	if err != nil {
+		return err
+	}
+	col := func(b string) string {
+		return map[string]string{"on_hand": "qty_on_hand", "pending": "qty_pending", "defective": "qty_defective"}[b]
+	}
+	ups := map[string]any{
+		col(from): gorm.Expr(col(from)+" - ?", qty),
+		col(to):   gorm.Expr(col(to) + " + ?", qty),
+	}
+	if err := tx.Model(&model.Stock{}).Where("id=?", stock.ID).Updates(ups).Error; err != nil {
+		return err
+	}
+	// 双流水：来源桶 OUT + 目标桶 IN（保证每个桶的流水重算自洽）
+	mk := func(dir model.MoveDirection, bucket string) model.StockMovement {
+		return model.StockMovement{
+			TenantID: ac.TenantID, FactoryID: ac.FactoryID, WarehouseID: warehouseID,
+			MaterialID: line.MaterialID, BatchNo: batch,
+			Direction: dir, Qty: qty, QtyType: bucket, BizType: bizType,
+			SourceDocType: "qc_record", SourceDocNo: srcNo,
+			BeforeQty: 0, AfterQty: qty, OpUserID: ac.UserID,
+		}
+	}
+	out := mk(model.MoveOut, from)
+	if err := tx.Create(&out).Error; err != nil {
+		return err
+	}
+	in := mk(model.MoveIn, to)
+	return tx.Create(&in).Error
+}
+
+func (w *WmsAPI) applyStockAt2(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line model.StockOrderLine, batch string, loc *int64, dirQty float64, direction, bucket, bizNote string) error {
+	col := map[string]string{"on_hand": "qty_on_hand", "pending": "qty_pending", "defective": "qty_defective"}[bucket]
+	var stock model.Stock
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("factory_id=? AND warehouse_id=? AND material_id=? AND batch_no=? AND (location_id IS NOT DISTINCT FROM ?)",
+			ac.FactoryID, order.WarehouseID, line.MaterialID, batch, loc).
+		First(&stock).Error
+	if err == gorm.ErrRecordNotFound {
+		stock = model.Stock{
+			TenantID: ac.TenantID, FactoryID: ac.FactoryID, WarehouseID: order.WarehouseID,
+			LocationID: loc, MaterialID: line.MaterialID, BatchNo: batch,
+		}
+		if err := tx.Create(&stock).Error; err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	cur := map[string]float64{"on_hand": stock.QtyOnHand, "pending": stock.QtyPending, "defective": stock.QtyDefective}[bucket]
+	if dirQty < 0 && cur+dirQty < -1e-9 && !data.BoolParam(tx, ac.TenantID, "allow_negative_stock") {
+		return response.NewBiz(response.ErrStockOut, "可用库存不足（账面 "+f64(cur)+"），禁止负库存（可在系统参数开启）")
+	}
+	before := cur
+	after := before + dirQty
+	if err := tx.Model(&model.Stock{}).Where("id=?", stock.ID).
+		Update(col, gorm.Expr(col+" + ?", dirQty)).Error; err != nil {
+		return err
+	}
+	mov := model.StockMovement{
+		TenantID: ac.TenantID, FactoryID: ac.FactoryID, WarehouseID: order.WarehouseID,
+		LocationID: loc, MaterialID: line.MaterialID, BatchNo: batch,
+		Direction: model.MoveDirection(direction), Qty: abs(dirQty), QtyType: bucket,
+		BizType: bizTypeOf(order) + bizNote,
+		SourceDocType: "stock_order", SourceDocID: order.ID,
+		SourceDocNo: order.DocNo, BeforeQty: before, AfterQty: after, OpUserID: ac.UserID,
+	}
+	return tx.Create(&mov).Error
+}
+
 func (w *WmsAPI) applyStockAt(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line model.StockOrderLine, batch string, loc *int64, dirQty float64, direction string) error {
 	// 唯一维度行锁定或创建（数据库设计 §6：表达式唯一索引）
+	// FR-WMS-033：货位冻结禁止过账
+	if loc != nil {
+		var l model.Location
+		if err := tx.First(&l, *loc).Error; err == nil && l.Frozen {
+			return response.NewBiz(response.ErrBiz, "货位 "+l.Code+" 已冻结，禁止过账")
+		}
+	}
 	var stock model.Stock
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("factory_id=? AND warehouse_id=? AND material_id=? AND batch_no=? AND (location_id IS NOT DISTINCT FROM ?)",
@@ -297,8 +399,8 @@ func (w *WmsAPI) applyStockAt(tx *gorm.DB, ac *middleware.AuthCtx, order model.S
 	} else if err != nil {
 		return err
 	}
-	if dirQty < 0 && stock.QtyOnHand+dirQty < -1e-9 {
-		return response.NewBiz(response.ErrStockOut, "可用库存不足（账面 "+f64(stock.QtyOnHand)+"），禁止负库存")
+	if dirQty < 0 && stock.QtyOnHand+dirQty < -1e-9 && !data.BoolParam(tx, ac.TenantID, "allow_negative_stock") {
+		return response.NewBiz(response.ErrStockOut, "可用库存不足（账面 "+f64(stock.QtyOnHand)+"），禁止负库存（可在系统参数开启）")
 	}
 	before := stock.QtyOnHand
 	after := before + dirQty
@@ -309,7 +411,7 @@ func (w *WmsAPI) applyStockAt(tx *gorm.DB, ac *middleware.AuthCtx, order model.S
 	mov := model.StockMovement{
 		TenantID: ac.TenantID, FactoryID: ac.FactoryID, WarehouseID: order.WarehouseID,
 		LocationID: loc, MaterialID: line.MaterialID, BatchNo: batch,
-		Direction: model.MoveDirection(direction), Qty: abs(dirQty),
+		Direction: model.MoveDirection(direction), Qty: abs(dirQty), QtyType: "on_hand",
 		BizType: bizTypeOf(order), SourceDocType: "stock_order", SourceDocID: order.ID,
 		SourceDocNo: order.DocNo, BeforeQty: before, AfterQty: after, OpUserID: ac.UserID,
 	}
@@ -376,6 +478,12 @@ func (w *WmsAPI) writeBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.Stoc
 			tx.Model(&model.WorkOrder{}).Where("id=?", order.SourceDocID).
 				Update("picked_qty", gorm.Expr("picked_qty+?", pl.Qty))
 		}
+	case "return":
+		// A5 退料：冲减工单已领量（FR-MES-005）
+		for _, pl := range lines {
+			tx.Model(&model.WorkOrder{}).Where("id=?", order.SourceDocID).
+				Update("picked_qty", gorm.Expr("GREATEST(picked_qty-?, 0)", pl.Qty))
+		}
 	case "production":
 		// 完工入库：工单 → 已入库；FQC 待检自动生成；实际成本自动归集（M4）
 		tx.Model(&model.WorkOrder{}).Where("id=? AND status='finished'", order.SourceDocID).
@@ -440,6 +548,8 @@ func bizTypeOf(o model.StockOrder) string {
 		return "销售出库"
 	case "picking":
 		return "领料出库"
+	case "return":
+		return "退料入库"
 	case "move":
 		return "移库"
 	case "gain":

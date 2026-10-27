@@ -2,6 +2,7 @@
 package router
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/evolvermon/evolvermon/internal/crud"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
+	"github.com/evolvermon/evolvermon/internal/pkg/response"
 	"github.com/evolvermon/evolvermon/internal/model"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
 )
@@ -163,6 +165,18 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	crudRes[model.Factory](v1, db, "plt:factory", "/factories", crud.Options[model.Factory]{
 		FactoryScoped: false, // 工厂属于租户而非工厂，全租户可见（供工厂切换）
 		SearchCols: []string{"code", "name"}, FilterCols: []string{"code"},
+		// FR-PLT-012：存在未完结单据禁止停用
+		BeforeUpdate: func(db *gorm.DB, ac *middleware.AuthCtx, obj *model.Factory, old *model.Factory) error {
+			if obj.Status == 0 && old.Status == 1 {
+				var wo, so int64
+				db.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('draft','released','running','paused','finished')", ac.TenantID, old.ID).Count(&wo)
+				db.Model(&model.StockOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('draft','doing')", ac.TenantID, old.ID).Count(&so)
+				if wo+so > 0 {
+					return response.NewBiz(response.ErrBiz, fmt.Sprintf("存在未完结单据（工单 %d / 出入库 %d），禁止停用", wo, so))
+				}
+			}
+			return nil
+		},
 	})
 	crudRes[model.Warehouse](v1, db, "plt:warehouse", "/warehouses", crud.Options[model.Warehouse]{
 		FactoryScoped: true, SearchCols: []string{"code", "name"}, FilterCols: []string{"type"},
@@ -189,10 +203,32 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	act(v1, "plt:audit", "GET", "/audit-logs", plt.AuditLogs)
 	act(v1, "plt:param", "GET", "/params", plt.GetParams)
 	act(v1, "plt:param", "POST", "/params", plt.PutParam)
+	// 补齐（PRD 审计 A1~A3）：租户管理 / 单号规则 / 重置密码
+	act(v1, "plt:perm", "GET", "/tenants", plt.ListTenants)
+	act(v1, "plt:perm", "POST", "/tenants", plt.CreateTenant)
+	act(v1, "plt:perm", "PUT", "/tenants/:id", plt.UpdateTenant)
+	act(v1, "plt:param", "GET", "/doc-rules", plt.ListDocRules)
+	act(v1, "plt:param", "PUT", "/doc-rules/:id", plt.UpdateDocRule)
+	act(v1, "plt:user", "PUT", "/users/:id/reset-password", plt.ResetPassword)
 
 	// ---- 主数据 ----
 	crudRes[model.Material](v1, db, "erp:material", "/materials", crud.Options[model.Material]{
 		FactoryScoped: false, SearchCols: []string{"code", "name", "spec"}, FilterCols: []string{"category", "source_type"},
+		// FR-ERP-004：存在未完结单据禁止停用
+		BeforeUpdate: func(db *gorm.DB, ac *middleware.AuthCtx, obj *model.Material, old *model.Material) error {
+			if obj.Status == 0 && old.Status == 1 {
+				var so, po, wo int64
+				db.Raw(`SELECT COUNT(*) FROM sales_order_lines l JOIN sales_orders o ON o.id=l.sales_order_id
+					WHERE l.material_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, old.ID).Scan(&so)
+				db.Raw(`SELECT COUNT(*) FROM purchase_order_lines l JOIN purchase_orders o ON o.id=l.purchase_order_id
+					WHERE l.material_id=? AND o.status IN ('draft','arriving','receiving') AND o.deleted_at IS NULL`, old.ID).Scan(&po)
+				db.Model(&model.WorkOrder{}).Where("tenant_id=? AND material_id=? AND status IN ('draft','released','running','paused')", ac.TenantID, old.ID).Count(&wo)
+				if so+po+wo > 0 {
+					return response.NewBiz(response.ErrBiz, fmt.Sprintf("物料存在未完结单据（销售 %d / 采购 %d / 工单 %d），禁止停用", so, po, wo))
+				}
+			}
+			return nil
+		},
 	})
 	act(v1, "erp:material", "GET", "/materials/:id/where-used", mst.WhereUsed)
 	crudRes[model.Bom](v1, db, "erp:bom", "/boms", crud.Options[model.Bom]{
@@ -262,6 +298,7 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	act(v1, "mes:workorder", "POST", "/work-orders/:id/close", mes.Close)
 	act(v1, "mes:workorder", "POST", "/work-orders/:id/force-finish", mes.ForceFinish)
 	act(v1, "mes:workorder", "POST", "/work-orders/:id/picking-request", mes.PickingRequest)
+	act(v1, "mes:workorder", "POST", "/work-orders/:id/return-material", mes.ReturnMaterial)
 	act(v1, "mes:workorder", "POST", "/work-orders/:id/finish-receipt", mes.FinishReceipt)
 	act(v1, "mes:operation", "GET", "/wo-operations", mes.ListOps)
 	act(v1, "mes:operation", "POST", "/wo-operations/:id/assign", mes.AssignOp)
@@ -296,6 +333,11 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	act(v1, "mes:report", "POST", "/devices/:code/telemetry", ext.PushTelemetry)
 	act(v1, "mes:report", "GET", "/devices/telemetry/latest", ext.LatestTelemetry)
 	act(v1, "mes:workorder", "GET", "/advisor/insights", ext.Insights)
+	// 附件（总册 7.3.1）：登录即可，按租户隔离
+	attach := &api.AttachmentAPI{DB: db}
+	act(v1, "", "POST", "/attachments", attach.Upload)
+	act(v1, "", "GET", "/attachments", attach.List)
+	act(v1, "", "GET", "/attachments/:id/download", attach.Download)
 	act(v1, "mes:quality", "GET", "/trace/work-order/:id", mst.TraceWorkOrder)
 	// M3：生产计划域
 	plan := &api.PlanAPI{DB: db}

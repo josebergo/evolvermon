@@ -337,6 +337,123 @@ INS=$(req GET "/advisor/insights")
 INS_N=$(echo "$INS" | python -c "import sys,json;print(len(json.load(sys.stdin)['data']['insights']))")
 ok "洞察条数：$INS_N（0 也算通过=无风险）"
 
+say "故事28 (补齐) 租户管理 API"
+TEN=$(req GET "/tenants")
+TEN_N=$(echo "$TEN" | jget data.total)
+[ "${TEN_N:-0}" -ge 1 ] && ok "租户列表 $TEN_N 家" || bad "租户API异常"
+req POST /tenants '{"code":"QAT","name":"验证租户","contactName":"QA"}' > /dev/null
+QAT_ID=$(req GET "/tenants?q=QAT" | jget data.list.0.id)
+req PUT "/tenants/$QAT_ID" '{"status":0}' > /dev/null
+QAT_ST=$(req GET "/tenants?q=QAT" | jget data.list.0.status)
+[ "$QAT_ST" = "0" ] && ok "租户停用生效" || bad "租户停用失败"
+
+say "故事29 (补齐) 单号规则配置"
+RULES=$(req GET /doc-rules)
+RULE_N=$(echo "$RULES" | python -c "import sys,json;print(len(json.load(sys.stdin)['data']))")
+[ "${RULE_N:-0}" -ge 9 ] && ok "单号规则 $RULE_N 条" || bad "单号规则API异常"
+SO_RULE_ID=$(echo "$RULES" | python -c "import sys,json;print(next(r['id'] for r in json.load(sys.stdin)['data'] if r['docType']=='SO'))")
+req PUT "/doc-rules/$SO_RULE_ID" '{"prefix":"XS"}' > /dev/null
+SO_PFX=$(req GET /doc-rules | python -c "import sys,json;print(next(r['prefix'] for r in json.load(sys.stdin)['data'] if r['docType']=='SO'))")
+[ "$SO_PFX" = "XS" ] && ok "单号前缀已改为 XS" || bad "单号规则修改失败"
+req PUT "/doc-rules/$SO_RULE_ID" '{"prefix":"SO"}' > /dev/null
+
+say "故事30 (补齐) 管理员重置密码"
+QC_UID=$(req GET "/users?q=qc" | jget data.list.0.id)
+req PUT "/users/$QC_UID/reset-password" '{"newPassword":"Demo@456"}' > /dev/null
+RELOGIN=$(curl -s -X POST -H "Content-Type: application/json" -d '{"username":"qc","password":"Demo@456"}' "$BASE/auth/login" | python -c "import sys,json;print(json.load(sys.stdin)['code'])")
+[ "$RELOGIN" = "0" ] && ok "新密码登录成功" || bad "重置密码失败"
+req PUT "/users/$QC_UID/reset-password" '{"newPassword":"Demo@123"}' > /dev/null
+
+say "故事31 (补齐) 停用校验（物料/工厂）"
+MAT_NEW=$(req POST /materials '{"code":"QA-TEMP","name":"停用校验物料","category":"raw","unit":"个"}')
+MAT_NEW_ID=$(echo "$MAT_NEW" | jget data.id)
+req POST /sales-orders "{\"customerId\":$(req GET "/customers?page_size=1" | jget data.list.0.id),\"lines\":[{\"materialId\":$MAT_NEW_ID,\"qty\":1,\"price\":1}]}" > /dev/null
+MAT_OBJ=$(req GET "/materials/$MAT_NEW_ID")
+DIS=$(req PUT "/materials/$MAT_NEW_ID" "$(echo "$MAT_OBJ" | python -c "
+import sys,json
+d=json.load(sys.stdin)['data']; d['status']=0; print(json.dumps(d))")")
+echo "$DIS" | grep -q '"code":3000' && ok "有未结单据的物料停用被拒" || bad "物料停用校验失效: $DIS"
+WO_NEW_FAC=$(req GET "/work-orders/$WO_NEW_ID" | jget data.factoryId)
+FAC_OBJ=$(req GET "/factories" | python -c "
+import sys,json
+facs=json.load(sys.stdin)['data']['list']
+print(json.dumps(next(f for f in facs if f['id']==$WO_NEW_FAC)))")
+FAC_ID=$(echo "$FAC_OBJ" | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+FAC_DIS=$(req PUT "/factories/$FAC_ID" "$(echo "$FAC_OBJ" | python -c "
+import sys,json
+d=json.load(sys.stdin); d['status']=0; print(json.dumps(d))")")
+echo "$FAC_DIS" | grep -q '"code":3000' && ok "有未结工单的工厂停用被拒" || bad "工厂停用校验失效: $FAC_DIS"
+
+say "故事32 (补齐) 负库存参数生效"
+req POST /params '{"key":"allow_negative_stock","value":"true"}' > /dev/null
+NS_MAT=$(req GET "/materials?category=raw&page_size=20" | python -c "
+import sys,json
+ms=json.load(sys.stdin)['data']['list']
+print(next(m['id'] for m in ms if m['code']=='RM-3002'))")
+NS_WHS=$(req GET "/warehouses?type=raw" | jget data.list.0.id)
+NS=$(req POST /stock-orders "{\"docType\":\"shp\",\"sourceType\":\"manual\",\"warehouseId\":$NS_WHS,\"lines\":[{\"materialId\":$NS_MAT,\"qty\":999999}]}")
+NS_ID=$(echo "$NS" | jget data.id)
+NS_LINE=$(req GET "/stock-orders/$NS_ID" | jget data.lines.0.id)
+NS_POST=$(req POST "/stock-orders/$NS_ID/post-lines" "{\"lines\":[{\"lineId\":$NS_LINE,\"qty\":999999}]}")
+NS_QTY=$(req GET "/stocks?material_id=$NS_MAT" | python -c "import sys,json;print(any(r['qtyOnHand']<0 for r in json.load(sys.stdin)['data']['list']))")
+[ "$NS_QTY" = "True" ] && ok "参数开启后允许负库存过账" || bad "负库存参数未生效: $NS_POST"
+req POST /params '{"key":"allow_negative_stock","value":"false"}' > /dev/null
+
+say "故事33 (补齐) 退料闭环 + 工序结束时间"
+RET=$(req POST "/work-orders/$WO_FG/return-material")
+RET_ID=$(echo "$RET" | jget data.id)
+RET_LINES=$(req GET "/stock-orders/$RET_ID" | python -c "
+import sys,json
+d=json.load(sys.stdin)['data']['lines']
+print(json.dumps({'lines':[{'lineId':l['id'],'qty':l['qty']} for l in d if l['qty']-l['doneQty']>1e-9]}))")
+req POST "/stock-orders/$RET_ID/post-lines" "$RET_LINES" > /dev/null
+RET_ST=$(req GET "/stock-orders/$RET_ID" | jget data.status)
+[ "$RET_ST" = "done" ] && ok "退料入库过账完成（已领量冲减）" || bad "退料失败: $RET"
+ENDED=$(req GET "/wo-operations?work_order_id=$WO_FG" | python -c "
+import sys,json
+ops=json.load(sys.stdin)['data']['list']
+print(sum(1 for o in ops if o.get('endedAt')))")
+[ "${ENDED:-0}" -ge 1 ] && ok "工序已带结束时间（$ENDED 道）" || bad "ended_at 未落"
+
+say "故事34 (补齐) IQC 待检量隔离"
+RM1=$(req GET "/materials?page_size=50" | python -c "
+import sys,json
+print(next(m['id'] for m in json.load(sys.stdin)['data']['list'] if m['code']=='RM-3001'))")
+PO2=$(req POST /purchase-orders "{\"supplierId\":$(req GET "/suppliers?page_size=1" | jget data.list.0.id),\"lines\":[{\"materialId\":$RM1,\"qty\":100,\"price\":8.5}]}")
+req POST "/purchase-orders/$(echo "$PO2" | jget data.id)/audit" > /dev/null
+RCV2=$(req POST "/purchase-orders/$(echo "$PO2" | jget data.id)/arrive")
+RCV2_ID=$(echo "$RCV2" | jget data.id)
+RCV2_LINE=$(req GET "/stock-orders/$RCV2_ID" | jget data.lines.0.id)
+req POST "/stock-orders/$RCV2_ID/post-lines" "{\"lines\":[{\"lineId\":$RCV2_LINE,\"qty\":100}]}" > /dev/null
+PEND=$(req GET "/stocks?material_id=$RM1" | python -c "
+import sys,json
+rows=json.load(sys.stdin)['data']['list']
+r=next((x for x in rows if x.get('qtyPending',0)>0), None)
+print(int(r['qtyPending']) if r else 0)")
+[ "${PEND:-0}" -ge 100 ] && ok "IQC 到货入待检桶（$PEND）" || bad "待检隔离未生效"
+QC2=$(req GET "/qc-records" | python -c "
+import sys,json
+print(next(r['id'] for r in json.load(sys.stdin)['data']['list'] if r['sourceType']=='arrive' and r['result']=='pending'))")
+req POST "/qc-records/$QC2/audit" '{"result":"pass"}' > /dev/null
+PASS_QTY=$(req GET "/stocks?material_id=$RM1" | python -c "
+import sys,json
+rows=json.load(sys.stdin)['data']['list']
+r=next((x for x in rows if x.get('qtyPending',0)>0), None)
+print(int(r['qtyPending']) if r else 0)")
+[ "${PASS_QTY:-0}" = "0" ] && ok "检验合格后转可用" || bad "待检释放失败"
+
+say "故事35 (补齐) 单据二维码 + 附件 + 销售直发"
+PR2=$(curl -s -H "Authorization: Bearer $AT" "$BASE/print/stock-orders/$SHP_DOC")
+echo "$PR2" | grep -q "data:image/png" && ok "打印含二维码" || bad "无二维码"
+echo "attachment-test" > .att.txt
+ATT=$(curl -s -H "Authorization: Bearer $AT" -F "file=@.att.txt" -F "objectType=stock_order" -F "objectId=$SHP_DOC" "$BASE/attachments")
+ATT_N=$(req GET "/attachments?objectType=stock_order&objectId=$SHP_DOC" | python -c "import sys,json;print(len(json.load(sys.stdin)['data']))")
+[ "${ATT_N:-0}" -ge 1 ] && ok "附件上传并列出 $ATT_N 个" || bad "附件失败: $ATT"
+rm -f .att.txt
+DIR=$(req POST /work-orders "{\"materialId\":$FG_ID,\"qty\":5,\"sourceType\":\"sales\",\"sourceDocNo\":\"direct\"}")
+DIR_OK=$(echo "$DIR" | jget data.docNo)
+[ -n "$DIR_OK" ] && ok "销售直发工单 $DIR_OK" || bad "直发失败: $DIR"
+
 say "越权矩阵抽查（NFR-031）"
 NOAUTH=$(curl -s "$BASE/stocks" -H "Authorization: Bearer invalid")
 echo "$NOAUTH" | grep -q '"code":1000' && ok "无效令牌被拒" || bad "无效令牌放行"

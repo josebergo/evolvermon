@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	qrcode "github.com/skip2/go-qrcode"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -18,6 +20,44 @@ import (
 )
 
 type PrintAPI struct{ DB *gorm.DB }
+
+
+// qrDataURI 生成二维码 data:image/png（FR-WMS-060/061：单头二维码供 PDA 扫单）。
+func qrDataURI(content string) string {
+	png, err := qrcode.Encode(content, qrcode.Medium, 160)
+	if err != nil {
+		return ""
+	}
+	return "data:image/png;base64," + base64Std(png)
+}
+
+func base64Std(b []byte) string {
+	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	var out []byte
+	for i := 0; i < len(b); i += 3 {
+		var n uint32
+		rem := len(b) - i
+		n = uint32(b[i]) << 16
+		if rem > 1 {
+			n |= uint32(b[i+1]) << 8
+		}
+		if rem > 2 {
+			n |= uint32(b[i+2])
+		}
+		out = append(out, chars[(n>>18)&63], chars[(n>>12)&63])
+		if rem > 1 {
+			out = append(out, chars[(n>>6)&63])
+		} else {
+			out = append(out, '=')
+		}
+		if rem > 2 {
+			out = append(out, chars[n&63])
+		} else {
+			out = append(out, '=')
+		}
+	}
+	return string(out)
+}
 
 func (p *PrintAPI) page(title string, body string) string {
 	return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>` + title + `</title>
@@ -77,7 +117,8 @@ func (p *PrintAPI) StockOrder(c *gin.Context) {
 			l.LineNo, html.EscapeString(m.Code), html.EscapeString(m.Name), html.EscapeString(m.Spec), html.EscapeString(m.Unit),
 			num(l.Qty), num(l.DoneQty), html.EscapeString(l.BatchNo))
 	}
-	body := `<div class="hd"><h1>` + p.docTitle(o) + `</h1><div>` + html.EscapeString(wh.Name) + `</div></div>
+	body := `<div class="hd"><h1>` + p.docTitle(o) + `</h1><div style="display:flex;align-items:center;gap:8px">` + html.EscapeString(wh.Name) +
+		`<img src="` + qrDataURI(o.DocNo) + `" width="52" height="52" title="` + o.DocNo + `"/></div></div>
 <div class="meta">单号：<b>` + o.DocNo + `</b>　来源：` + html.EscapeString(o.SourceDocNo) + `　日期：` + fmt.Sprint(createdAtOf(o.CreatedAt)) + `</div>
 <table><tr><th>行号</th><th>物料编码</th><th>物料名称</th><th>规格</th><th>单位</th><th>数量</th><th>已执行</th><th>批次</th></tr>` + rows.String() + `</table>
 <div class="ft"><span>制单：____________</span><span>仓管：____________</span><span>收货/领料人：____________</span><span>客户/主管：____________</span></div>`
@@ -106,7 +147,8 @@ func (p *PrintAPI) WorkOrder(c *gin.Context) {
 			op.Seq, html.EscapeString(op.Name), html.EscapeString(wcName[op.WorkCenterID]),
 			num(op.PlanHours), num(op.QtyOk), num(op.QtyDefect))
 	}
-	body := `<div class="hd"><h1>工单路由卡</h1><div>单号：<b>` + wo.DocNo + `</b></div></div>
+	body := `<div class="hd"><h1>工单路由卡</h1><div style="display:flex;align-items:center;gap:8px">单号：<b>` + wo.DocNo +
+		`</b><img src="` + qrDataURI(wo.DocNo) + `" width="52" height="52"/></div></div>
 <div class="meta">产品：` + html.EscapeString(mat.Code+" "+mat.Name) + `（` + html.EscapeString(mat.Spec) + `）　计划量：` + num(wo.Qty) + ` ` + html.EscapeString(mat.Unit) +
 		`　合格：` + num(wo.GoodQty) + `　不良：` + num(wo.DefectQty) +
 		`<br>计划开工：` + ts(wo.PlanStartAt) + `　计划完工：` + ts(wo.PlanEndAt) + `　状态：` + string(wo.Status) + `</div>

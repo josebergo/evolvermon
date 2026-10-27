@@ -13,6 +13,7 @@ type Stock struct {
 	MaterialID   int64   `gorm:"index:idx_stock_dim,priority:5" json:"materialId"`
 	BatchNo      string  `gorm:"size:64;index:idx_stock_dim,priority:6" json:"batchNo"`
 	QtyOnHand    float64 `gorm:"type:numeric(18,4);default:0" json:"qtyOnHand"`
+	QtyPending   float64 `gorm:"type:numeric(18,4);default:0" json:"qtyPending"` // A 级补齐：IQC 待检量隔离桶
 	QtyReserved  float64 `gorm:"type:numeric(18,4);default:0" json:"qtyReserved"`
 	QtyFrozen    float64 `gorm:"type:numeric(18,4);default:0" json:"qtyFrozen"`
 	QtyDefective float64 `gorm:"type:numeric(18,4);default:0" json:"qtyDefective"`
@@ -36,6 +37,7 @@ type StockMovement struct {
 	BatchNo        string        `gorm:"size:64" json:"batchNo"`
 	Direction      MoveDirection `gorm:"size:4" json:"direction"`
 	Qty            float64       `gorm:"type:numeric(18,4)" json:"qty"`
+	QtyType        string        `gorm:"size:16;default:'on_hand'" json:"qtyType"` // on_hand | pending | defective
 	BizType        string        `gorm:"size:32;index" json:"bizType"`
 	SourceDocType  string        `gorm:"size:32;index" json:"sourceDocType"`
 	SourceDocID    int64         `gorm:"index" json:"sourceDocId"`
