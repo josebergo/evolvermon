@@ -28,5 +28,6 @@
   },
   "allowScripts": {
     "esbuild": true
-  }
+  },
+  "author": "码禾数字"
 }

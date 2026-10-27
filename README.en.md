@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | **English**
 
+**Author: 码禾数字**
+
 > **In one sentence**: the performance of Go plus the experience of React, letting small and mid-sized manufacturers run the full loop — *Sales Order → MRP → Work Order → Shop-Floor Reporting → QC → Stock-In → Shipping* — in 5 minutes. Multi-tenant & multi-factory · PostgreSQL · Apache-2.0 free for commercial use · warm high-contrast UI.
 
 Tech stack: Go 1.27 + Gin + GORM · React 18 + TypeScript + Vite + Ant Design 5 · PostgreSQL 16
@@ -95,4 +97,5 @@ evolver-mon/
 
 ---
 
-*EvolverMon — world-class open-source manufacturing software every factory can afford.*
+*EvolverMon — world-class open-source manufacturing software every factory can afford.*  
+*Author: 码禾数字*
