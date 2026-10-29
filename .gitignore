@@ -17,3 +17,5 @@ docs/01-strategy/
 docs/04-delivery/
 *.exe~
 backend/data/
+.codegraph/
+video/
