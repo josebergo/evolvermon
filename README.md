@@ -39,6 +39,17 @@ bash scripts/verify-golden-path.sh [base_url]   # 64 项断言：M1–M6 全链�
 bash scripts/load-report.sh [base_url] 200      # 200 并发报工压测（基线 P99=32ms）
 ```
 
+### 可选基础设施（RabbitMQ / Kafka / Redis）
+
+默认**零外部中间件**（进程内实现）；多副本部署或事件流接入时按环境变量切换，业务代码不感知：
+
+```bash
+export EM_BROKER=rabbitmq EM_BROKER_URL=amqp://guest:guest@127.0.0.1:5672/   # 或 kafka + kafka://h1:9092
+export EM_CACHE=redis     EM_CACHE_URL=redis://127.0.0.1:6379/0              # 缓存 + 分布式锁
+```
+
+领域事件（工单下达/库存过账/质检判定/订单审核）除 DB 投递箱外会同步推送到消息总线，供实时看板、数据管道订阅；定时 MRP 在多副本下由分布式锁保证单实例执行。详见[基础设施端口层设计](docs/03-design/infra-ports.md)。
+
 ## 演示账号
 
 | 账号 | 密码 | 角色 | 可体验 |
@@ -66,7 +77,7 @@ bash scripts/load-report.sh [base_url] 200      # 200 并发报工压测（基�
 
 ```
 evolver-mon/
-├── backend/                 # Go+Gin API（cmd/server + internal/{api,crud,data,events,model,…} + seed）
+├── backend/                 # Go+Gin API（cmd/server + internal/{api,crud,data,events,infra,model,…} + seed）
 ├── frontend/                # React+TS+Vite 前端（src/pages 按域组织 + 通用 CrudTable 引擎）
 ├── docs/                    # 功能设计文档（见下表）
 ├── scripts/                 # 金路径验证 / 并发压测
@@ -81,6 +92,7 @@ evolver-mon/
 | [PRD 总册](docs/02-prd/00-prd-master.md) | 角色矩阵、跨领域规范（多租户/单据状态机/审计/权限编号体系） |
 | PRD 分册 | [平台](docs/02-prd/01-prd-platform.md) · [ERP](docs/02-prd/02-prd-erp.md) · [MES](docs/02-prd/03-prd-mes.md) · [WMS](docs/02-prd/04-prd-wms.md) · [非功能](docs/02-prd/05-prd-nfr.md) |
 | [架构设计](docs/03-design/architecture.md) | 分层/多租户实现/高并发设计/事件出口 |
+| [基础设施端口层](docs/03-design/infra-ports.md) | RabbitMQ/Kafka/Redis 可插拔适配器、事件总线、分布式锁 |
 | [数据库设计](docs/03-design/database-design.md) | 全表 DDL 规范、索引与约束清单 |
 | [API 设计](docs/03-design/api-design.md) | REST 约定、错误码、全端点 |
 | [核心流程](docs/03-design/core-flows.md) | 端到端流程/状态机/MRP 算法/过账事务 |

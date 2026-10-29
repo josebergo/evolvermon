@@ -1,5 +1,7 @@
 # EvolverMon 一键部署（NFR-020 形态①：单机 Docker Compose）
 # 使用：docker compose up -d --build
+# 可选中间件（多副本/事件流，默认不需要）：docker compose --profile full up -d --build
+#   切换见 docs/03-design/infra-ports.md（EM_BROKER / EM_CACHE）
 # 访问：http://localhost
 services:
   db:
@@ -24,6 +26,11 @@ services:
       EM_JWT_SECRET: "change-me-to-a-random-64-char-string"
       EM_SEED_DEMO: "true"
       EM_HTTP_ADDR: ":8080"
+      # 水平扩展时启用（api 需多副本：docker compose up -d --scale api=2）：
+      # EM_BROKER: "rabbitmq"
+      # EM_BROKER_URL: "amqp://guest:guest@rabbitmq:5672/"
+      # EM_CACHE: "redis"
+      # EM_CACHE_URL: "redis://redis:6379/0"
     depends_on:
       db:
         condition: service_healthy
@@ -35,6 +42,37 @@ services:
       - "80:80"
     depends_on:
       - api
+    restart: unless-stopped
+
+  # ---- 可选中间件（--profile full 时启动；默认单机部署不需要）----
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["full"]
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    profiles: ["full"]
+    ports:
+      - "15672:15672" # 管理台（本机调试用；5672 仅供内网 api 访问）
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:3.9.0
+    profiles: ["full"]
+    environment: # KRaft 单节点，仅供内网 api 访问
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     restart: unless-stopped
 
 volumes:

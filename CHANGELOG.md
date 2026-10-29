@@ -2,6 +2,16 @@
 
 里程碑（M1–M6）与功能清单。每个 M 均以 `scripts/verify-golden-path.sh` 端到端验证通过为发布门槛。
 
+## v0.7.0（基础设施端口层：RabbitMQ / Kafka / Redis 可插拔）
+端口-适配器架构（`backend/internal/infra`），默认零外部中间件、按环境变量切换，业务代码不感知（[设计文档](docs/03-design/infra-ports.md)）：
+- 三个端口：消息总线 `Broker`（发布/订阅）、缓存 `Cache`、分布式锁 `Locker`；统一消息信封 `infra.Message`（跨中间件格式一致）
+- 适配器：memory（默认，进程内）· RabbitMQ（topic 交换机 + durable 队列 + 手动 ack + 断线重连）· Kafka（消费组 + acks=all + 成功提交位点）· Redis（缓存 + SETNX token 锁）
+- fail-fast：显式配置远端中间件但不可达 → 启动即失败，绝不静默降级 memory
+- 领域事件双写：`events.Publish` 在 DB 投递箱之外同步推送 `evolvermon.events` 总线主题（Key=tenant-{id} 保序），供实时看板/数据管道订阅
+- 定时 MRP 多副本互斥：每轮先取分布式锁（`mrp-auto`），单机 memory 锁行为不变
+- docker-compose 新增 `--profile full`（redis/rabbitmq/kafka 可选服务，默认部署不变）
+- 测试：端口/内存实现/工厂装配 9 项单测全绿；远端适配器集成测试需真实服务（未设置自动 skip）
+
 ## v0.6.1（PRD 缺口补齐：A 级 13 项 + IQC 隔离 + 工程化）
 按 PRD 审计结论补齐全部 [M] 级缺口与关键工程债（验证断言 49 → 64）：
 - 平台管理 API：租户 CRUD（停用/过期拒绝登录）、单号规则配置、管理员重置密码（FR-PLT-001~004/061/023）

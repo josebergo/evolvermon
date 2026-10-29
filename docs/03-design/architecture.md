@@ -22,10 +22,13 @@
                          └───────┬───────────────┬──────┘
                                  │               │
                      ┌───────────▼─────┐   ┌─────▼──────────┐
-                     │ PostgreSQL 16   │   │ Redis (可选 M2)  │
-                     │ 业务库+审计+流水  │   │ 缓存/锁/队列      │
+                     │ PostgreSQL 16   │   │ 可选中间件        │
+                     │ 业务库+审计+流水  │   │ Redis/MQ(端口层) │
                      └─────────────────┘   └────────────────┘
 ```
+
+> 可选中间件（Redis 缓存/锁、RabbitMQ/Kafka 消息总线）通过 `internal/infra` 端口-适配器层接入：
+> 默认进程内实现零依赖，`EM_BROKER`/`EM_CACHE` 环境变量切换，详见 [infra-ports.md](infra-ports.md)。
 
 ## 2. 后端分层（Go + Gin）
 
@@ -33,13 +36,14 @@
 
 ```
 backend/
-├── cmd/server/main.go          # 装配：config→db(等PG→AutoMigrate→seed)→router→run
+├── cmd/server/main.go          # 装配：config→db(等PG→AutoMigrate→seed)→infra(端口层)→router→run
 ├── internal/
 │   ├── config/                 # 环境变量（EM_*），敏感配置不入库（NFR-033）
 │   ├── pkg/                    # 通用件：jwtx(JWT)、response(统一包/错误码)、测试
 │   ├── middleware/             # trace/cors/auth(JWT→加载权限)/rbac(Require)
 │   ├── model/                  # GORM 实体（按域文件）+ BaseModel（审计列/乐观锁）
 │   ├── data/                   # DB 初始化、租户过滤作用域、单号服务、审计助手
+│   ├── infra/                  # 基础设施端口层：Broker/Cache/Locker + memory/rabbitmq/kafka/redis 适配器
 │   ├── crud/                   # 泛型 CRUD 引擎（列表/详情/增删改+租户过滤+乐观锁）
 │   ├── api/                    # 业务接口（auth/platform/master/erp/mrp/mes/wms/board）
 │   └── router/                 # 路由注册 + 权限点绑定（装配冒烟测试保路由无冲突）

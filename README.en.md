@@ -40,6 +40,17 @@ bash scripts/verify-golden-path.sh [base_url]   # 64 assertions: full M1–M6 ch
 bash scripts/load-report.sh [base_url] 200      # 200-concurrent reporting load test (baseline P99 = 32ms)
 ```
 
+### Optional infrastructure (RabbitMQ / Kafka / Redis)
+
+By default **zero external middleware** (in-process implementations). For multi-replica deployments or event streaming, switch via environment variables — business code is unaware of the concrete backend:
+
+```bash
+export EM_BROKER=rabbitmq EM_BROKER_URL=amqp://guest:guest@127.0.0.1:5672/   # or kafka + kafka://h1:9092
+export EM_CACHE=redis     EM_CACHE_URL=redis://127.0.0.1:6379/0              # cache + distributed lock
+```
+
+Domain events (work-order release / stock posting / QC verdict / order audit) are pushed to the message bus in addition to the DB outbox, ready for realtime dashboards and data pipelines; scheduled MRP is guarded by a distributed lock in multi-replica deployments. See [Infra Ports & Adapters design](docs/03-design/infra-ports.md) (Chinese).
+
 ## Demo Accounts
 
 | Account | Password | Role | Try it |
@@ -84,6 +95,7 @@ evolver-mon/
 | [PRD Master](docs/02-prd/00-prd-master.md) | Role matrix, cross-domain standards (multi-tenancy, document state machines, audit, permission numbering) |
 | PRD Volumes | [Platform](docs/02-prd/01-prd-platform.md) · [ERP](docs/02-prd/02-prd-erp.md) · [MES](docs/02-prd/03-prd-mes.md) · [WMS](docs/02-prd/04-prd-wms.md) · [Non-functional](docs/02-prd/05-prd-nfr.md) |
 | [Architecture](docs/03-design/architecture.md) | Layering, multi-tenancy, high-concurrency design, event outlet |
+| [Infra Ports](docs/03-design/infra-ports.md) | Pluggable RabbitMQ/Kafka/Redis adapters, event bus, distributed lock |
 | [Database Design](docs/03-design/database-design.md) | Full DDL conventions, index & constraint list |
 | [API Design](docs/03-design/api-design.md) | REST conventions, error codes, all endpoints |
 | [Core Flows](docs/03-design/core-flows.md) | End-to-end flows, state machines, MRP algorithm, posting transaction |
