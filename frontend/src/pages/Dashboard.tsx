@@ -71,6 +71,9 @@ export default function Dashboard() {
           </Card>
         </Col>
       </Row>
+      <div style={{ marginTop: 16, textAlign: 'center', color: '#5C4433', fontSize: 12 }}>
+        由 <Typography.Link href="https://mahedigital.com/" target="_blank" rel="noopener noreferrer">码禾数字</Typography.Link> 开发
+      </div>
     </div>
   )
 }
