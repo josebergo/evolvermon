@@ -3,6 +3,7 @@ package api
 // 主数据扩展：BOM 树/环校验/启用切换、物料反查（FR-ERP-020~027）、工作台/看板/追溯。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -160,7 +161,7 @@ func (m *MasterAPI) BomEnable(c *gin.Context) {
 		response.Fail(c, err)
 		return
 	}
-	data.Audit(m.DB, ac, c.ClientIP(), "enable", "bom", i64s(bom.ID), bom.VersionNo, "", "active")
+	data.Audit(m.DB, ac, c.ClientIP(), "enable", "bom", conv.I64s(bom.ID), bom.VersionNo, "", "active")
 	response.OK2(c, gin.H{"ok": true})
 }
 

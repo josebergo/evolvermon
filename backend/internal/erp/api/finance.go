@@ -3,6 +3,7 @@ package api
 // M4 财务对接：应收/应付凭证导出（对接用友/金蝶等的外部接口，本系统不自建总账）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -103,12 +104,12 @@ func joinVouchers(vs []Voucher) string {
 
 func pad(n int) string {
 	if n < 10 {
-		return "000" + i64s(int64(n))
+		return "000" + conv.I64s(int64(n))
 	}
 	if n < 100 {
-		return "00" + i64s(int64(n))
+		return "00" + conv.I64s(int64(n))
 	}
-	return "0" + i64s(int64(n))
+	return "0" + conv.I64s(int64(n))
 }
 
 func round2(f float64) float64 { return float64(int64(f*100+0.5)) / 100 }
@@ -119,8 +120,8 @@ func ftoa(f float64) string {
 		f = -f
 	}
 	cents := int64(f*100 + 0.5)
-	s := i64s(cents / 100)
-	fracS := "00" + i64s(cents%100)
+	s := conv.I64s(cents / 100)
+	fracS := "00" + conv.I64s(cents%100)
 	if neg {
 		s = "-" + s
 	}

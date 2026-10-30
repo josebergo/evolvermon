@@ -4,6 +4,7 @@ package api
 // 模板内联避免外部资源依赖（NFR-023 离线工厂可用）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"html"
 	"strings"
@@ -151,7 +152,7 @@ func (p *PrintAPI) WorkOrder(c *gin.Context) {
 		`</b><img src="` + qrDataURI(wo.DocNo) + `" width="52" height="52"/></div></div>
 <div class="meta">产品：` + html.EscapeString(mat.Code+" "+mat.Name) + `（` + html.EscapeString(mat.Spec) + `）　计划量：` + num(wo.Qty) + ` ` + html.EscapeString(mat.Unit) +
 		`　合格：` + num(wo.GoodQty) + `　不良：` + num(wo.DefectQty) +
-		`<br>计划开工：` + ts(wo.PlanStartAt) + `　计划完工：` + ts(wo.PlanEndAt) + `　状态：` + string(wo.Status) + `</div>
+		`<br>计划开工：` + conv.Ts(wo.PlanStartAt) + `　计划完工：` + conv.Ts(wo.PlanEndAt) + `　状态：` + string(wo.Status) + `</div>
 <table><tr><th>序</th><th>工序</th><th>工作中心</th><th>计划工时</th><th>合格/不良</th><th>报工人签字</th><th>检验</th><th>备注</th></tr>` + rows.String() + `</table>
 <div class="ft"><span>计划员：____________</span><span>车间主管：____________</span><span>完工确认：____________</span></div>`
 	c.Data(200, "text/html; charset=utf-8", []byte(p.page("工单路由卡", body)))
@@ -170,9 +171,3 @@ func num(f float64) string {
 	return strings.TrimRight(s, ".")
 }
 
-func ts(t *time.Time) string {
-	if t == nil || t.IsZero() {
-		return "—"
-	}
-	return t.Format("2006-01-02")
-}

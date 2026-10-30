@@ -3,6 +3,8 @@ package api
 // MES：工单生命周期、派工、报工（幂等）、质检（FR-MES-001~053；流程见 core-flows.md §2.2）。
 
 import (
+	wmssvc "github.com/evolvermon/evolvermon/internal/wms/svc"
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"encoding/json"
 	"strings"
 	"time"
@@ -376,7 +378,7 @@ func (m *MesAPI) AssignOp(c *gin.Context) {
 		st = model.OpWaiting
 	}
 	m.DB.Model(&model.WoOperation{}).Where("id=?", op.ID).Updates(map[string]any{"assignee_user_id": req.UserID, "status": st})
-	data.Audit(m.DB, ac, c.ClientIP(), "assign", "wo_operation", i64s(op.ID), op.Name, "", "")
+	data.Audit(m.DB, ac, c.ClientIP(), "assign", "wo_operation", conv.I64s(op.ID), op.Name, "", "")
 	response.OK2(c, gin.H{"ok": true})
 }
 
@@ -718,7 +720,6 @@ func (m *MesAPI) releasePending(ac *middleware.AuthCtx, rec model.QcRecord, to, 
 		First(&stock).Error; err != nil || stock.QtyPending < rec.Qty-1e-9 {
 		return // 无待检量：历史/非隔离路径，跳过
 	}
-	wms := WmsAPI{DB: m.DB}
-	_ = wms.TransferBucket(m.DB, ac, order.WarehouseID, model.StockOrderLine{MaterialID: rec.MaterialID},
+	_ = wmssvc.TransferBucket(m.DB, ac, order.WarehouseID, model.StockOrderLine{MaterialID: rec.MaterialID},
 		rec.BatchNo, rec.Qty, "pending", to, bizType, rec.DocNo)
 }

@@ -3,6 +3,7 @@ package api
 // MRP：全量净需求计算（FR-ERP-070~077；算法见 core-flows.md §4，M1 简化版）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"time"
 
@@ -207,8 +208,8 @@ func (m *MrpAPI) Convert(c *gin.Context) {
 				}
 				wo := model.WorkOrder{
 					MaterialID: s.MaterialID, Qty: s.NetQty, SourceType: "mrp",
-					SourceDocNo: joinSources(s.Sources), PlanStartAt: ptrTime(time.Now()),
-					PlanEndAt:   ptrTime(s.DueDate),
+					SourceDocNo: joinSources(s.Sources), PlanStartAt: conv.PtrTime(time.Now()),
+					PlanEndAt:   conv.PtrTime(s.DueDate),
 				}
 				wo.TenantID = ac.TenantID
 				wo.FactoryID = &ac.FactoryID

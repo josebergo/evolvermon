@@ -3,6 +3,7 @@ package api
 // M5：厂间调拨（一步完成：调出厂扣账 → 在途流水 → 调入厂入账，双单据留痕）+ 集团视图。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"time"
 
@@ -81,7 +82,7 @@ func (t *TransferAPI) Create(c *gin.Context) {
 			return err
 		}
 		if stock.QtyOnHand < req.Qty-1e-9 {
-			return response.NewBiz(response.ErrStockOut, "调出厂库存不足（账面 "+f64(stock.QtyOnHand)+"）")
+			return response.NewBiz(response.ErrStockOut, "调出厂库存不足（账面 "+conv.F64(stock.QtyOnHand)+"）")
 		}
 		before := stock.QtyOnHand
 		tx.Model(&model.Stock{}).Where("id=?", stock.ID).Update("qty_on_hand", before-req.Qty)
@@ -90,7 +91,7 @@ func (t *TransferAPI) Create(c *gin.Context) {
 		outOrder := model.StockOrder{
 			DocType: model.DocSHP, WarehouseID: whOut.ID, SourceType: "move",
 			SourceDocType: "factory_transfer", Status: model.SkDone,
-			PostedBy: ac.UserID, PostedAt: ptrTime(time.Now()), Remark: req.Remark,
+			PostedBy: ac.UserID, PostedAt: conv.PtrTime(time.Now()), Remark: req.Remark,
 		}
 		outOrder.TenantID = ac.TenantID
 		outOrder.FactoryID = &req.FromFactoryID
@@ -122,7 +123,7 @@ func (t *TransferAPI) Create(c *gin.Context) {
 		inOrder := model.StockOrder{
 			DocType: model.DocRCV, WarehouseID: whIn.ID, SourceType: "move",
 			SourceDocType: "factory_transfer", Status: model.SkDone,
-			PostedBy: ac.UserID, PostedAt: ptrTime(time.Now()), Remark: "厂间调拨来自单 " + outNo,
+			PostedBy: ac.UserID, PostedAt: conv.PtrTime(time.Now()), Remark: "厂间调拨来自单 " + outNo,
 		}
 		inOrder.TenantID = ac.TenantID
 		inOrder.FactoryID = &req.ToFactoryID
@@ -152,7 +153,7 @@ func (t *TransferAPI) Create(c *gin.Context) {
 		return
 	}
 	data.Audit(t.DB, ac, c.ClientIP(), "factory-transfer", "stock", "", mat.Code, "",
-		fmt.Sprintf("%s:%s qty=%s", outNo, inNo, f64(req.Qty)))
+		fmt.Sprintf("%s:%s qty=%s", outNo, inNo, conv.F64(req.Qty)))
 	response.OK2(c, gin.H{"outDocNo": outNo, "inDocNo": inNo})
 }
 

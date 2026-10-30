@@ -3,6 +3,7 @@ package api
 // M3 生产计划域：ATP 可承诺量、有限产能排产、甘特数据、派工看板（FR-ERP/PRD M3）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"math"
 	"sort"
 	"strconv"
@@ -177,7 +178,7 @@ func (p *PlanAPI) Schedule(c *gin.Context) {
 			scheduled++
 		}
 	}
-	data.Audit(p.DB, ac, c.ClientIP(), "schedule", "plan", "", "", "", i64s(int64(scheduled)))
+	data.Audit(p.DB, ac, c.ClientIP(), "schedule", "plan", "", "", "", conv.I64s(int64(scheduled)))
 	response.OK2(c, gin.H{"scheduled": scheduled})
 }
 
@@ -216,7 +217,7 @@ func (p *PlanAPI) Gantt(c *gin.Context) {
 			bars = append(bars, bar{
 				WoNo: wo.DocNo, Seq: op.Seq, Name: op.Name,
 				Start: op.PlanStartAt.Format("2006-01-02"), End: op.PlanEndAt.Format("2006-01-02"),
-				Priority: wo.Priority, PlanEnd: ts(wo.PlanEndAt),
+				Priority: wo.Priority, PlanEnd: conv.Ts(wo.PlanEndAt),
 				Overdue: wo.PlanEndAt != nil && wo.PlanEndAt.Before(now),
 			})
 		}

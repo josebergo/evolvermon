@@ -3,6 +3,7 @@ package api
 // ERP 交易域：销售订单状态机/发货、请购转采购、采购到货（FR-ERP-050~068）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,7 +43,7 @@ func (e *ErpAPI) AuditSalesOrder(c *gin.Context) {
 		}
 		var m model.Material
 		if err := e.DB.Scopes(data.ScopeFor(ac, false)).First(&m, l.MaterialID).Error; err != nil || m.Status != 1 {
-			response.Fail(c, response.NewBiz(response.ErrBiz, "物料无效："+i64s(l.MaterialID)))
+			response.Fail(c, response.NewBiz(response.ErrBiz, "物料无效："+conv.I64s(l.MaterialID)))
 			return
 		}
 	}
@@ -179,7 +180,7 @@ func (e *ErpAPI) ConvertPRToPO(c *gin.Context) {
 	}
 	docNo, _ := data.NextDocNo(e.DB, ac.TenantID, "PO")
 	po := model.PurchaseOrder{
-		SupplierID: req.SupplierID, OrderDate: ptrTime(time.Now()), Status: model.StDraft,
+		SupplierID: req.SupplierID, OrderDate: conv.PtrTime(time.Now()), Status: model.StDraft,
 	}
 	po.TenantID = ac.TenantID
 	po.FactoryID = &ac.FactoryID
@@ -314,4 +315,3 @@ func (e *ErpAPI) loadPO(c *gin.Context, ac *middleware.AuthCtx) (*model.Purchase
 	return &po, true
 }
 
-func ptrTime(t time.Time) *time.Time { return &t }

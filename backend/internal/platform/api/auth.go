@@ -3,7 +3,7 @@
 package api
 
 import (
-	"strconv"
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -83,7 +83,7 @@ func (a *AuthAPI) Login(c *gin.Context) {
 	}
 	now := time.Now()
 	a.DB.Model(&model.User{}).Where("id=?", user.ID).Updates(map[string]any{"last_login_at": now, "fail_count": 0})
-	data.Audit(a.DB, &middleware.AuthCtx{UserID: user.ID, TenantID: user.TenantID, Username: user.Username}, c.ClientIP(), "login", "user", i64s(user.ID), user.RealName, "", "")
+	data.Audit(a.DB, &middleware.AuthCtx{UserID: user.ID, TenantID: user.TenantID, Username: user.Username}, c.ClientIP(), "login", "user", conv.I64s(user.ID), user.RealName, "", "")
 	response.OK2(c, gin.H{
 		"accessToken": access, "refreshToken": refresh,
 		"user": gin.H{"id": user.ID, "username": user.Username, "realName": user.RealName, "isSuper": user.IsSuper},
@@ -176,7 +176,7 @@ func (a *AuthAPI) SwitchFactory(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrSystem, "令牌签发失败"))
 		return
 	}
-	data.Audit(a.DB, ac, c.ClientIP(), "switch-factory", "factory", i64s(req.FactoryID), f.Name, "", "")
+	data.Audit(a.DB, ac, c.ClientIP(), "switch-factory", "factory", conv.I64s(req.FactoryID), f.Name, "", "")
 	response.OK2(c, gin.H{"accessToken": access, "factoryId": req.FactoryID})
 }
 
@@ -203,7 +203,7 @@ func (a *AuthAPI) ChangePassword(c *gin.Context) {
 	}
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.New), bcrypt.DefaultCost)
 	a.DB.Model(&model.User{}).Where("id=?", user.ID).Update("password_hash", string(hash))
-	data.Audit(a.DB, ac, c.ClientIP(), "change-password", "user", i64s(user.ID), user.Username, "", "")
+	data.Audit(a.DB, ac, c.ClientIP(), "change-password", "user", conv.I64s(user.ID), user.Username, "", "")
 	response.OK2(c, gin.H{"ok": true})
 }
 
@@ -256,4 +256,3 @@ func (a *AuthAPI) menusFor(ac *middleware.AuthCtx) []gin.H {
 	return build(0)
 }
 
-func i64s(v int64) string { return strconv.FormatInt(v, 10) }

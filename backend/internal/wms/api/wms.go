@@ -3,6 +3,8 @@ package api
 // WMS：库存过账（行级锁防超卖，core-flows.md §3）、可用量、流水、盘点（FR-WMS 全域）。
 
 import (
+	messvc "github.com/evolvermon/evolvermon/internal/mes/svc"
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"time"
 
@@ -132,6 +134,15 @@ func (w *WmsAPI) ReleaseReservation(c *gin.Context) {
 
 // ---- 过账核心 ----
 
+// svcLines 过账行转质检服务入参（wms→mes 边界 DTO，Phase 3 API 化）。
+func svcLines(lines []postLineReq) []messvc.PostLine {
+	out := make([]messvc.PostLine, len(lines))
+	for i, l := range lines {
+		out[i] = messvc.PostLine{LineID: l.LineID, Qty: l.Qty}
+	}
+	return out
+}
+
 type postLineReq struct {
 	LineID     int64   `json:"lineId" binding:"required"`
 	Qty        float64 `json:"qty" binding:"required,gt=0"`
@@ -244,7 +255,7 @@ func (w *WmsAPI) PostLines(c *gin.Context) {
 				if remaining > 1e-9 {
 					if !data.BoolParam(tx, ac.TenantID, "allow_negative_stock") {
 						return response.NewBiz(response.ErrStockOut,
-							fmt.Sprintf("行 %d 可用库存不足（缺 %s），禁止负库存（可在系统参数开启）", line.LineNo, f64(remaining)))
+							fmt.Sprintf("行 %d 可用库存不足（缺 %s），禁止负库存（可在系统参数开启）", line.LineNo, conv.F64(remaining)))
 					}
 					// 参数开启：缺口以无批次维度落负账（总册 OQ-3）
 					if err := w.applyStockAt(tx, ac, order, line, "", toLoc, -remaining, "OUT"); err != nil {
@@ -297,43 +308,6 @@ func (w *WmsAPI) applyStock(tx *gorm.DB, ac *middleware.AuthCtx, order model.Sto
 	return w.applyStockAt(tx, ac, order, line, batch, loc, dirQty, direction)
 }
 
-// TransferBucket QC 联动桶间转移（FR-WMS-025/MES-043）：pending→on_hand / pending→defective。
-func (w *WmsAPI) TransferBucket(tx *gorm.DB, ac *middleware.AuthCtx, warehouseID int64, line model.StockOrderLine, batch string, qty float64, from, to, bizType, srcNo string) error {
-	var stock model.Stock
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("tenant_id=? AND factory_id=? AND warehouse_id=? AND material_id=? AND batch_no=?",
-			ac.TenantID, ac.FactoryID, warehouseID, line.MaterialID, batch).
-		First(&stock).Error
-	if err != nil {
-		return err
-	}
-	col := func(b string) string {
-		return map[string]string{"on_hand": "qty_on_hand", "pending": "qty_pending", "defective": "qty_defective"}[b]
-	}
-	ups := map[string]any{
-		col(from): gorm.Expr(col(from)+" - ?", qty),
-		col(to):   gorm.Expr(col(to) + " + ?", qty),
-	}
-	if err := tx.Model(&model.Stock{}).Where("id=?", stock.ID).Updates(ups).Error; err != nil {
-		return err
-	}
-	// 双流水：来源桶 OUT + 目标桶 IN（保证每个桶的流水重算自洽）
-	mk := func(dir model.MoveDirection, bucket string) model.StockMovement {
-		return model.StockMovement{
-			TenantID: ac.TenantID, FactoryID: ac.FactoryID, WarehouseID: warehouseID,
-			MaterialID: line.MaterialID, BatchNo: batch,
-			Direction: dir, Qty: qty, QtyType: bucket, BizType: bizType,
-			SourceDocType: "qc_record", SourceDocNo: srcNo,
-			BeforeQty: 0, AfterQty: qty, OpUserID: ac.UserID,
-		}
-	}
-	out := mk(model.MoveOut, from)
-	if err := tx.Create(&out).Error; err != nil {
-		return err
-	}
-	in := mk(model.MoveIn, to)
-	return tx.Create(&in).Error
-}
 
 func (w *WmsAPI) applyStockAt2(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line model.StockOrderLine, batch string, loc *int64, dirQty float64, direction, bucket, bizNote string) error {
 	col := map[string]string{"on_hand": "qty_on_hand", "pending": "qty_pending", "defective": "qty_defective"}[bucket]
@@ -355,7 +329,7 @@ func (w *WmsAPI) applyStockAt2(tx *gorm.DB, ac *middleware.AuthCtx, order model.
 	}
 	cur := map[string]float64{"on_hand": stock.QtyOnHand, "pending": stock.QtyPending, "defective": stock.QtyDefective}[bucket]
 	if dirQty < 0 && cur+dirQty < -1e-9 && !data.BoolParam(tx, ac.TenantID, "allow_negative_stock") {
-		return response.NewBiz(response.ErrStockOut, "可用库存不足（账面 "+f64(cur)+"），禁止负库存（可在系统参数开启）")
+		return response.NewBiz(response.ErrStockOut, "可用库存不足（账面 "+conv.F64(cur)+"），禁止负库存（可在系统参数开启）")
 	}
 	before := cur
 	after := before + dirQty
@@ -400,7 +374,7 @@ func (w *WmsAPI) applyStockAt(tx *gorm.DB, ac *middleware.AuthCtx, order model.S
 		return err
 	}
 	if dirQty < 0 && stock.QtyOnHand+dirQty < -1e-9 && !data.BoolParam(tx, ac.TenantID, "allow_negative_stock") {
-		return response.NewBiz(response.ErrStockOut, "可用库存不足（账面 "+f64(stock.QtyOnHand)+"），禁止负库存（可在系统参数开启）")
+		return response.NewBiz(response.ErrStockOut, "可用库存不足（账面 "+conv.F64(stock.QtyOnHand)+"），禁止负库存（可在系统参数开启）")
 	}
 	before := stock.QtyOnHand
 	after := before + dirQty
@@ -472,7 +446,7 @@ func (w *WmsAPI) writeBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.Stoc
 			tx.Model(&po).Updates(map[string]any{"status": st})
 		}
 		// M4：到货自动生成 IQC 待检单（FR-MES-042 来源自动化）
-		autoQc(tx, ac, order, lines, model.QcIQC)
+		messvc.AutoQc(tx, ac, order, svcLines(lines), model.QcIQC)
 	case "picking":
 		for _, pl := range lines {
 			tx.Model(&model.WorkOrder{}).Where("id=?", order.SourceDocID).
@@ -488,8 +462,8 @@ func (w *WmsAPI) writeBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.Stoc
 		// 完工入库：工单 → 已入库；FQC 待检自动生成；实际成本自动归集（M4）
 		tx.Model(&model.WorkOrder{}).Where("id=? AND status='finished'", order.SourceDocID).
 			Update("status", model.WoStored)
-		autoQc(tx, ac, order, lines, model.QcFQC)
-		_, _ = CostWorkOrder(tx, ac, order.SourceDocID)
+		messvc.AutoQc(tx, ac, order, svcLines(lines), model.QcFQC)
+		_, _ = messvc.CostWorkOrder(tx, ac, order.SourceDocID)
 		postedQty := map[int64]float64{}
 		for _, pl := range lines {
 			postedQty[pl.LineID] = postedQty[pl.LineID] + pl.Qty
@@ -563,7 +537,6 @@ func bizTypeOf(o model.StockOrder) string {
 }
 
 func abs(f float64) float64 { if f < 0 { return -f }; return f }
-func f64(f float64) string  { return fmt.Sprintf("%g", f) }
 
 // ---- 盘点 ----
 

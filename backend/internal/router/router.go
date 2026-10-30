@@ -10,7 +10,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/api"
+	platformapi "github.com/evolvermon/evolvermon/internal/platform/api"
+	masterapi "github.com/evolvermon/evolvermon/internal/master/api"
+	erpapi "github.com/evolvermon/evolvermon/internal/erp/api"
+	mesapi "github.com/evolvermon/evolvermon/internal/mes/api"
+	wmsapi "github.com/evolvermon/evolvermon/internal/wms/api"
+	integrationapi "github.com/evolvermon/evolvermon/internal/integration/api"
 	"github.com/evolvermon/evolvermon/internal/crud"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
@@ -144,14 +149,14 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	})
 	r.GET("/metrics", metrics.Handler())
 
-	authAPI := &api.AuthAPI{DB: db, JM: jm}
-	erp := &api.ErpAPI{DB: db}
-	mes := &api.MesAPI{DB: db}
-	wms := &api.WmsAPI{DB: db}
-	mrp := &api.MrpAPI{DB: db}
-	mst := &api.MasterAPI{DB: db}
-	plt := &api.PlatformAPI{DB: db}
-	board := &api.BoardAPI{DB: db}
+	authAPI := &platformapi.AuthAPI{DB: db, JM: jm}
+	erp := &erpapi.ErpAPI{DB: db}
+	mes := &mesapi.MesAPI{DB: db}
+	wms := &wmsapi.WmsAPI{DB: db}
+	mrp := &erpapi.MrpAPI{DB: db}
+	mst := &masterapi.MasterAPI{DB: db}
+	plt := &platformapi.PlatformAPI{DB: db}
+	board := &mesapi.BoardAPI{DB: db}
 
 	r.POST("/api/v1/auth/login", authAPI.Login)
 
@@ -317,17 +322,17 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	act(v1, "mes:quality", "GET", "/qc-records", wms.QcRecords)
 	act(v1, "mes:quality", "POST", "/qc-records/:id/audit", mes.AuditQc)
 	// M4：处置 + 成本 + 财务凭证
-	quality := &api.QualityAPI{DB: db}
-	finance := &api.FinanceAPI{DB: db}
+	quality := &mesapi.QualityAPI{DB: db}
+	finance := &erpapi.FinanceAPI{DB: db}
 	act(v1, "mes:quality", "POST", "/qc-records/:id/dispose", quality.Dispose)
 	act(v1, "mes:workorder", "POST", "/work-orders/:id/costing", quality.Costing)
 	act(v1, "erp:sales", "GET", "/finance/vouchers", finance.Vouchers)
 	// M5：厂间调拨 + 集团视图
-	transfer := &api.TransferAPI{DB: db}
+	transfer := &wmsapi.TransferAPI{DB: db}
 	act(v1, "wms:stockorder", "POST", "/transfers", transfer.Create)
 	act(v1, "plt:perm", "GET", "/group/summary", transfer.GroupSummary)
 	// M6：事件出口 + 设备遥测 + 智能建议
-	ext := &api.ExtAPI{DB: db}
+	ext := &integrationapi.ExtAPI{DB: db}
 	act(v1, "plt:perm", "GET", "/webhooks", ext.ListWebhooks)
 	act(v1, "plt:perm", "POST", "/webhooks", ext.CreateWebhook)
 	act(v1, "plt:perm", "DELETE", "/webhooks/:id", ext.DeleteWebhook)
@@ -336,20 +341,20 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	act(v1, "mes:report", "GET", "/devices/telemetry/latest", ext.LatestTelemetry)
 	act(v1, "mes:workorder", "GET", "/advisor/insights", ext.Insights)
 	// 附件（总册 7.3.1）：登录即可，按租户隔离
-	attach := &api.AttachmentAPI{DB: db}
+	attach := &platformapi.AttachmentAPI{DB: db}
 	act(v1, "", "POST", "/attachments", attach.Upload)
 	act(v1, "", "GET", "/attachments", attach.List)
 	act(v1, "", "GET", "/attachments/:id/download", attach.Download)
 	act(v1, "mes:quality", "GET", "/trace/work-order/:id", mst.TraceWorkOrder)
 	// M3：生产计划域
-	plan := &api.PlanAPI{DB: db}
+	plan := &erpapi.PlanAPI{DB: db}
 	act(v1, "erp:mrp", "GET", "/atp", plan.Atp)
 	act(v1, "mes:workorder", "POST", "/plan/schedule", plan.Schedule)
 	act(v1, "mes:workorder", "GET", "/plan/gantt", plan.Gantt)
 	act(v1, "mes:operation", "GET", "/plan/dispatch-board", plan.DispatchBoard)
 	// M2：序列号/批次追溯 + 单据打印
-	traceAPI := &api.TraceAPI{DB: db}
-	printAPI := &api.PrintAPI{DB: db}
+	traceAPI := &mesapi.TraceAPI{DB: db}
+	printAPI := &mesapi.PrintAPI{DB: db}
 	act(v1, "mes:quality", "GET", "/trace/serial/:sn", traceAPI.Serial)
 	act(v1, "wms:stock", "GET", "/trace/batch/:no", traceAPI.Batch)
 	act(v1, "wms:stockorder", "GET", "/print/stock-orders/:id", printAPI.StockOrder)

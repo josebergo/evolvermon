@@ -3,6 +3,7 @@ package api
 // M6：Webhook 管理、设备遥测接入、智能建议（启发式 AI-lite）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -132,7 +133,7 @@ func (e *ExtAPI) Insights(c *gin.Context) {
 	for _, s := range shorts {
 		out = append(out, insight{"shortage", "high",
 			"缺料预警：" + s.Name,
-			"现存量 " + f64(s.OnHand) + " 已低于安全库存 " + f64(s.Safety),
+			"现存量 " + conv.F64(s.OnHand) + " 已低于安全库存 " + conv.F64(s.Safety),
 			"运行 MRP 生成补货建议，或人工创建请购"})
 	}
 
@@ -148,7 +149,7 @@ func (e *ExtAPI) Insights(c *gin.Context) {
 		if progress < 50 {
 			out = append(out, insight{"due-risk", "high",
 				"交期风险：" + w.DocNo,
-				"进度仅 " + f64(progress) + "%，计划完工 " + ts(w.PlanEndAt),
+				"进度仅 " + conv.F64(progress) + "%，计划完工 " + conv.Ts(w.PlanEndAt),
 				"提升优先级插单排产，或与客户协商改期"})
 		}
 	}
@@ -168,7 +169,7 @@ func (e *ExtAPI) Insights(c *gin.Context) {
 		if l.Ops >= 2 && l.Cap > 0 && float64(l.Ops) > l.Cap {
 			out = append(out, insight{"capacity", "medium",
 				"产能瓶颈：" + l.Name,
-				"待执行工序 " + i64s(l.Ops) + " 道，超出日产能 " + f64(l.Cap),
+				"待执行工序 " + conv.I64s(l.Ops) + " 道，超出日产能 " + conv.F64(l.Cap),
 				"安排加班、临时转移工序或调整排产优先级"})
 		}
 	}
