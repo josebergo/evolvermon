@@ -13,11 +13,22 @@ import (
 	"github.com/evolvermon/evolvermon/internal/infra"
 	"github.com/evolvermon/evolvermon/internal/model"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
+	"github.com/evolvermon/evolvermon/internal/pkg/logx"
 	"github.com/evolvermon/evolvermon/internal/router"
 	"github.com/evolvermon/evolvermon/seed"
 )
 
+func getenvDefault(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
 func main() {
+	// Phase 0.4：结构化日志（Lite 形态 service=evolvermon；Micro 各 cmd/<svc> 各自命名）
+	logx.Init(getenvDefault("EM_SERVICE", "evolvermon"))
+
 	cfg := config.Load()
 
 	db, err := data.Open(cfg.DatabaseDSN)

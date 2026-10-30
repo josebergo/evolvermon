@@ -2,7 +2,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,15 +12,45 @@ import (
 
 	"github.com/evolvermon/evolvermon/internal/model"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
+	"github.com/evolvermon/evolvermon/internal/pkg/logx"
 	"github.com/evolvermon/evolvermon/internal/pkg/response"
 )
 
-// Trace 为每个请求生成 trace_id（NFR-050）。
+// Trace 链路追踪（NFR-050 + 微服务方案 Phase 0.4）：W3C traceparent 透传。
+// 入口带合法 traceparent → 延续其 trace_id（跨服务串联）；否则生成新 trace。
+// 兼容旧 trace_id 键（response 回显），响应头回传 X-Trace-Id 便于排查。
 func Trace() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Set("trace_id", uuid.NewString()[:8])
+		traceID := parseTraceparent(c.GetHeader("Traceparent"))
+		spanID := uuid.NewString()[:16]
+		if traceID == "" {
+			traceID = strings.ReplaceAll(uuid.NewString(), "-", "") // 32 hex
+		}
+		c.Set("trace_id", traceID[:8])
+		c.Set("trace_id_full", traceID)
+		c.Set("span_id", spanID)
+		c.Header("X-Trace-Id", traceID[:8])
+		c.Header("Traceparent", "00-"+traceID+"-"+spanID+"-01")
 		c.Next()
 	}
+}
+
+// parseTraceparent 解析 W3C traceparent（00-<32hex>-<16hex>-<2hex>），非法返回空串。
+func parseTraceparent(v string) string {
+	if v == "" {
+		return ""
+	}
+	parts := strings.Split(v, "-")
+	if len(parts) != 4 || len(parts[1]) != 32 || len(parts[2]) != 16 {
+		return ""
+	}
+	hex := parts[1] + parts[2]
+	for _, ch := range hex {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", ch) {
+			return ""
+		}
+	}
+	return strings.ToLower(parts[1])
 }
 
 func CORS(allow string) gin.HandlerFunc {
@@ -138,11 +167,22 @@ func Require(perm string) gin.HandlerFunc {
 	}
 }
 
-// Logger 访问日志（结构化 stdout，NFR-050 字段）。
+// Logger 访问日志（Phase 0.4：slog JSON 结构化，含 trace_id/tenant_id/service 维度）。
 func Logger() gin.HandlerFunc {
-	return gin.LoggerWithFormatter(func(p gin.LogFormatterParams) string {
-		return fmt.Sprintf(`{"ts":%q,"method":%q,"path":%q,"status":%d,"latency_ms":%.1f,"ip":%q,"ua":%q}`+"\n",
-			p.TimeStamp.Format(time.RFC3339), p.Method, p.Path, p.StatusCode,
-			float64(p.Latency.Microseconds())/1000.0, p.ClientIP, p.Request.UserAgent())
-	})
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		attrs := []any{
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"status", c.Writer.Status(),
+			"latency_ms", float64(time.Since(start).Microseconds()) / 1000.0,
+			"ip", c.ClientIP(),
+			"trace_id", c.GetString("trace_id"),
+		}
+		if ac := GetAuth(c); ac != nil {
+			attrs = append(attrs, "tenant_id", ac.TenantID, "user_id", ac.UserID)
+		}
+		logx.L().Info("http_request", attrs...)
+	}
 }

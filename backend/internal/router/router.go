@@ -15,6 +15,7 @@ import (
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
 	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"github.com/evolvermon/evolvermon/internal/pkg/metrics"
 	"github.com/evolvermon/evolvermon/internal/model"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
 )
@@ -130,9 +131,9 @@ func userAfterCreate(db *gorm.DB, ac *middleware.AuthCtx, u *model.User) error {
 func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	dbRef = db
 	r := gin.New()
-	r.Use(gin.Recovery(), middleware.Trace(), middleware.CORS("*"))
+	r.Use(gin.Recovery(), middleware.Trace(), metrics.Middleware(), middleware.Logger(), middleware.CORS("*"))
 
-	// 健康探针（NFR-052）
+	// 健康探针（NFR-052）+ 指标导出（Phase 0.3，仅内网抓取，网关不对外路由）
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.GET("/readyz", func(c *gin.Context) {
 		if err := db.Exec("SELECT 1").Error; err != nil {
@@ -141,6 +142,7 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 		}
 		c.JSON(200, gin.H{"status": "ready"})
 	})
+	r.GET("/metrics", metrics.Handler())
 
 	authAPI := &api.AuthAPI{DB: db, JM: jm}
 	erp := &api.ErpAPI{DB: db}
