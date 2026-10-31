@@ -20,6 +20,8 @@ func Identity() {
 	}
 	data.RemoteDocNo = c.DocNo
 	data.RemoteAudit = c.Audit
+	data.RemoteParamPut = c.PutParam
+	data.RemoteBoolParam = c.BoolParam
 	middleware.SetUserLoader(func(db *gorm.DB, userID int64) (*middleware.UserLoad, error) {
 		dto, err := c.AuthContext(userID)
 		if err != nil {

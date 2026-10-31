@@ -20,7 +20,9 @@ fi
 if [ "${EM_KEEP_DB:-0}" != "1" ]; then
   echo "== 重置数据库 =="
   "$PGSQL/psql.exe" -h 127.0.0.1 -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='evolvermon' AND pid<>pg_backend_pid();" >/dev/null 2>&1
-  "$PGSQL/psql.exe" -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS evolvermon WITH (FORCE);" -c "CREATE DATABASE evolvermon;" >/dev/null
+  for db in evolvermon evolvermon_identity evolvermon_integration evolvermon_ops; do
+    "$PGSQL/psql.exe" -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS $db WITH (FORCE);" -c "CREATE DATABASE $db;" >/dev/null
+  done
 fi
 
 cd backend
@@ -28,12 +30,12 @@ rm -rf .pids
 wait_ready() { for i in $(seq 1 30); do curl -sf "$1" >/dev/null 2>&1 && return 0; sleep 1; done; echo "  ✗ $1 未就绪"; return 1; }
 
 echo "== 启动 identity（迁移+种子责任方，直启）=="
-EM_HTTP_ADDR=":8081" ./identity.exe > .pids-identity.log 2>&1 &
+EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_identity sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_CORE_URL="http://127.0.0.1:8082" ./identity.exe > .pids-identity.log 2>&1 &
 wait_ready http://127.0.0.1:8081/readyz || { tail -3 .pids-identity.log; exit 1; }
 
 echo "== 启动 ops-admin + gateway（自不管辖） =="
-EM_HTTP_ADDR=":8180" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" ./ops-admin.exe > .pids-ops-admin.log 2>&1 &
-EM_HTTP_ADDR=":8085" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" EM_MIGRATE=0 ./master-data.exe > .pids-master-data.log 2>&1 &
+EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_ops sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8180" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" ./ops-admin.exe > .pids-ops-admin.log 2>&1 &
+EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8085" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" EM_MIGRATE=0 ./master-data.exe > .pids-master-data.log 2>&1 &
 EM_MASTER_URL="http://127.0.0.1:8085" ./gateway.exe > .pids-gateway.log 2>&1 &
 wait_ready http://127.0.0.1:8180/readyz
 wait_ready http://127.0.0.1:8085/readyz || { tail -3 .pids-master-data.log; exit 1; } || { tail -3 .pids-ops-admin.log; exit 1; }

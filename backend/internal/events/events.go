@@ -22,6 +22,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// remoteFanout 分库形态（Phase 2）：true=本进程不直查 webhook_endpoints 扇出，
+// 由 integration 进程经 /internal/core/events 拉取生成投递（Lite 单库保持直查）。
+var remoteFanout bool
+
+// UseRemoteFanout 切换扇出模式（cmd/integration 于分库形态调用 false 侧由拉取替代；core main 调 true）。
+func UseRemoteFanout(v bool) { remoteFanout = v }
+
 // bus 可选消息总线（infra.Broker）：注入后领域事件双写 DB 投递箱 + 总线，
 // 供实时推送/跨服务消费等场景订阅；未注入时行为不变（仅 DB 投递箱）。
 var bus infra.Broker
@@ -39,6 +46,9 @@ func Publish(db *gorm.DB, tenantID int64, event string, payload any) {
 	// Phase 2.2：投递箱双写（至少一次；relay 推 Broker，消费方按 messageId 幂等）
 	if _, err := outbox.Save(db, tenantID, event, body); err != nil {
 		log.Printf("[events] outbox save %s: %v", event, err)
+	}
+	if remoteFanout {
+		return // 分库形态：integration 进程拉取 core outbox 后在自家库扇出
 	}
 	var eps []model.WebhookEndpoint
 	db.Where("tenant_id=? AND status=1", tenantID).Find(&eps)

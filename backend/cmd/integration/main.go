@@ -13,7 +13,7 @@ import (
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
-	"github.com/evolvermon/evolvermon/internal/outbox"
+	"github.com/evolvermon/evolvermon/internal/integration/fanout"
 	"github.com/evolvermon/evolvermon/internal/infra"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
 	"github.com/evolvermon/evolvermon/internal/pkg/logx"
@@ -37,7 +37,7 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		if _, err := data.MigrateVersioned(db); err != nil {
+		if _, err := data.MigrateVersioned(db, "integration"); err != nil {
 			log.Fatalf("migrate failed: %v", err)
 		}
 	} else {
@@ -52,7 +52,9 @@ func main() {
 	events.UseBroker(in.Broker)
 
 	events.StartWorker(db) // webhook 投递（integration schema 投递箱，跨进程共享库轮询）
-	outbox.StartRelay(db, in.Broker) // Phase 2.2：通用事件投递箱 relay（至少一次）
+	if coreURL := getenvDefault("EM_CORE_URL", ""); coreURL != "" {
+		fanout.Start(db, coreURL) // Phase 2 分库：拉取 core outbox → 自家库扇出 webhook
+	}
 	r := router.New(db, jm, "integration")
 	addr := getenvDefault("EM_HTTP_ADDR", ":8083")
 	log.Printf("integration listening on %s", addr)

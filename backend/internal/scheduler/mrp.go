@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/infra"
 	"github.com/evolvermon/evolvermon/internal/model"
@@ -40,6 +41,20 @@ func runOnce(db *gorm.DB, locker infra.Locker, minutes int) {
 		return // 其他副本持有
 	}
 	defer release()
+	// Phase 2 分库：工厂列表经 identity API（EM_IDENTITY_URL 未设=Lite 直查，行为不变）
+	if idc := client.Identity(); idc != nil {
+		fs, err := idc.Factories()
+		if err != nil {
+			log.Printf("[mrp-auto] factories: %v", err)
+			return
+		}
+		for _, f := range fs {
+			if err := data.RunScheduledMrp(db, f.TenantID, f.ID); err != nil {
+				log.Printf("[mrp-auto] factory %d: %v", f.ID, err)
+			}
+		}
+		return
+	}
 	var factories []model.Factory
 	db.Where("status=1").Find(&factories)
 	for _, f := range factories {

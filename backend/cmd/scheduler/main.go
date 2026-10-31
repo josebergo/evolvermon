@@ -11,6 +11,7 @@ import (
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/infra"
+	"github.com/evolvermon/evolvermon/internal/wire"
 	"github.com/evolvermon/evolvermon/internal/pkg/logx"
 	"github.com/evolvermon/evolvermon/internal/pkg/metrics"
 	"github.com/evolvermon/evolvermon/internal/scheduler"
@@ -32,12 +33,13 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		if _, err := data.MigrateVersioned(db); err != nil {
+		if _, err := data.MigrateVersioned(db, "core"); err != nil { // scheduler 无自有表；等 core 库就绪
 			log.Fatalf("migrate failed: %v", err)
 		}
 	} else {
 		log.Printf("migrate skipped (EM_MIGRATE=0)")
 	}
+	wire.Identity() // 分库：工厂列表/单号/sys_params 远程（未设 EM_IDENTITY_URL 时 no-op）
 
 	in, err := infra.Open(infra.Options{Broker: cfg.Broker, BrokerURL: cfg.BrokerURL, Cache: cfg.Cache, CacheURL: cfg.CacheURL})
 	if err != nil {

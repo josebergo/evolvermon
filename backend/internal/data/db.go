@@ -34,6 +34,43 @@ func Open(dsn string) (*gorm.DB, error) {
 	return db, nil
 }
 
+// MigrateProfile 按服务迁移的库内表集（Phase 2 分库）：all=Lite 单库全量（=Migrate）；
+// identity/core/integration/ops = 各自独立 DB 应建的表（core 库的 platform schema 仅保留事件底座表）。
+func MigrateProfile(db *gorm.DB, profile string) error {
+	switch profile {
+	case "identity":
+		return db.AutoMigrate(
+			&model.Tenant{}, &model.Factory{}, &model.User{}, &model.UserFactory{},
+			&model.Role{}, &model.UserRole{}, &model.Menu{}, &model.AuditLog{},
+			&model.SysParam{}, &model.DocNumberRule{}, &model.IdempotencyKey{}, &model.Attachment{},
+		)
+	case "core":
+		return db.AutoMigrate(
+			// 主数据 + 核心交易（master 库下一批拆出，暂随 core 库）
+			&model.Material{}, &model.Bom{}, &model.BomLine{}, &model.Routing{}, &model.RoutingOp{},
+			&model.WorkCenter{}, &model.Customer{}, &model.Supplier{},
+			&model.Warehouse{}, &model.Location{}, // 仓区随 core 库（master 下一批拆出）
+			&model.SalesOrder{}, &model.SalesOrderLine{}, &model.PurchaseRequest{}, &model.PurchaseRequestLine{},
+			&model.PurchaseOrder{}, &model.PurchaseOrderLine{}, &model.WorkOrder{}, &model.WoOperation{},
+			&model.ProductionReport{}, &model.DefectCode{}, &model.QcScheme{}, &model.QcRecord{},
+			&model.Stock{}, &model.StockMovement{}, &model.StockOrder{}, &model.StockOrderLine{},
+			&model.Stocktaking{}, &model.StocktakingLine{}, &model.StockReservation{}, &model.SerialNumber{},
+			// 事件底座（core 库的 platform schema 仅此两表）
+			&model.OutboxMessage{}, &model.ConsumedMessage{},
+		)
+	case "integration":
+		return db.AutoMigrate(
+			&model.WebhookEndpoint{}, &model.WebhookDelivery{}, &model.DeviceTelemetry{},
+			&model.IntegrationPullCursor{},
+			&model.ConsumedMessage{}, // 扇出幂等（拉取方去重）
+		)
+	case "ops":
+		return db.AutoMigrate(&model.OpsAuditLog{}, &model.OpsAlert{})
+	default: // all：Lite 单库全量
+		return Migrate(db)
+	}
+}
+
 func Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		// 平台
@@ -93,6 +130,9 @@ var docPrefixes = map[string]string{
 }
 
 // NextDocNo 原子递增序列并格式化：前缀-日期-流水。
+// RemoteParamPut 远程写系统参数钩子（分库形态 wire 注入；sys_params 归 identity 库）。
+var RemoteParamPut func(tenantID, factoryID int64, key, value string)
+
 // RemoteDocNo 远程取号钩子（Phase 2 第二批：EM_IDENTITY_URL 时由 wire 注入；identity 自身不设）。
 var RemoteDocNo func(tenantID int64, docType string) (string, error)
 
@@ -178,7 +218,13 @@ func Audit(db *gorm.DB, ac *middleware.AuthCtx, ip, action, objType, objID, objD
 }
 
 // BoolParam 读取租户级布尔参数（jsonb 值兼容 true/false 与 "true"/"false"）。
+// RemoteBoolParam 远程参数钩子（分库：sys_params 归 identity 库；wire 注入，60s 进程内缓存）。
+var RemoteBoolParam func(tenantID int64, key string) bool
+
 func BoolParam(db *gorm.DB, tenantID int64, key string) bool {
+	if RemoteBoolParam != nil {
+		return RemoteBoolParam(tenantID, key)
+	}
 	var p model.SysParam
 	if err := db.Where("tenant_id=? AND factory_id IS NULL AND key=?", tenantID, key).First(&p).Error; err != nil {
 		return false
@@ -193,7 +239,6 @@ func BoolParam(db *gorm.DB, tenantID int64, key string) bool {
 	}
 	return false
 }
-
 
 // domainNaming 包装默认命名策略：解析出默认表名后按 model.tableSchema 加 schema 前缀
 // （platform.tenants、master.materials…）。模型上显式 TableName() 的（schema_migrations）不走本策略。
@@ -222,6 +267,7 @@ func (n domainNaming) CheckerName(table, column string) string { return n.base.C
 func (n domainNaming) IndexName(table, column string) string   { return n.base.IndexName(table, column) }
 
 // EnsureSchemas 幂等建 schema（迁移 baseline 与升级 0002 前调用）。
+
 func EnsureSchemas(db *gorm.DB) error {
 	for _, sc := range model.Schemas() {
 		if err := db.Exec("CREATE SCHEMA IF NOT EXISTS " + sc).Error; err != nil {

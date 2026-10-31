@@ -29,7 +29,7 @@ var identityPrefixes = []string{
 var integrationPrefixes = []string{"webhooks", "webhook-deliveries", "devices", "advisor"}
 
 // masterPrefixes 主数据域（Phase 2）：materials 等路由至 master-data 服务。
-var masterPrefixes = []string{"materials", "boms", "routings", "work-centers", "customers", "suppliers"}
+var masterPrefixes = []string{"materials", "boms", "routings", "work-centers", "customers", "suppliers", "warehouses", "locations"}
 
 type upstream struct {
 	name  string

@@ -16,7 +16,7 @@ func TestPick(t *testing.T) {
 		{"/api/v1/users/1/roles", "identity"},
 		{"/api/v1/tenants", "identity"},
 		{"/api/v1/factories/3", "identity"},
-		{"/api/v1/warehouses", "identity"},
+		{"/api/v1/warehouses", "master"},
 		{"/api/v1/audit-logs", "identity"},
 		{"/api/v1/attachments/9/download", "identity"},
 		{"/api/v1/webhooks", "integration"},

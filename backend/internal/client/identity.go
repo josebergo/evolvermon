@@ -80,6 +80,35 @@ type AuthContextDTO struct {
 	DataScope string `json:"dataScope"`
 }
 
+// FactoryLite 工厂精简视图。
+type FactoryLite struct {
+	ID       int64  `json:"id"`
+	TenantID int64  `json:"tenantId"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	Status   int    `json:"status"`
+}
+
+// Factories 活跃工厂列表。
+func (c *IdentityClient) Factories() ([]FactoryLite, error) {
+	var out struct {
+		Data struct {
+			List []FactoryLite `json:"list"`
+		} `json:"data"`
+	}
+	if err := c.get("/internal/identity/factories", &out); err != nil {
+		return nil, err
+	}
+	return out.Data.List, nil
+}
+
+// PutParam 写系统参数（尽力而为）。
+func (c *IdentityClient) PutParam(tenantID, factoryID int64, key, value string) {
+	body, _ := json.Marshal(map[string]any{"tenantId": tenantID, "factoryId": factoryID, "key": key, "value": value})
+	var out any
+	_ = c.post("/internal/identity/param", body, &out)
+}
+
 func (c *IdentityClient) post(path string, body []byte, out any) error {
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
@@ -109,4 +138,67 @@ func (c *IdentityClient) do(req *http.Request, out any) error {
 		return fmt.Errorf("identity %s: http %d", req.URL.Path, resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// FactoryCheck core 单据开放数（identity 工厂停用校验用；>0 禁止停用）。
+func FactoryCheck(coreURL, token string, factoryID int64) (int64, error) {
+	hc := &http.Client{Timeout: 5 * time.Second}
+	req, _ := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("%s/internal/core/factory-check?factoryId=%d", coreURL, factoryID), nil)
+	req.Header.Set("X-Internal-Token", token)
+	resp, err := hc.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("core factory-check: http %d", resp.StatusCode)
+	}
+	var out struct {
+		Data struct {
+			OpenDocs int64 `json:"openDocs"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, err
+	}
+	return out.Data.OpenDocs, nil
+}
+
+// boolParamCache 参数进程内缓存（5s：过账高频读取 + 参数变更快速生效）。
+var boolParamCache = struct {
+	sync.Mutex
+	m map[string]paramEntry
+}{m: map[string]paramEntry{}}
+
+// boolParamTTL 缓存时长（测试可缩短）。
+const boolParamTTL = 5 * time.Second
+
+type paramEntry struct {
+	val bool
+	at  time.Time
+}
+
+// BoolParam 远程读布尔参数（60s 缓存；失败按 false，与未配置语义一致）。
+func (c *IdentityClient) BoolParam(tenantID int64, key string) bool {
+	ck := fmt.Sprintf("%d:%s", tenantID, key)
+	boolParamCache.Lock()
+	if e, ok := boolParamCache.m[ck]; ok && time.Since(e.at) < boolParamTTL {
+		boolParamCache.Unlock()
+		return e.val
+	}
+	boolParamCache.Unlock()
+	var out struct {
+		Data struct {
+			Value string `json:"value"`
+		} `json:"data"`
+	}
+	val := false
+	if err := c.get(fmt.Sprintf("/internal/identity/param?tenantId=%d&key=%s", tenantID, key), &out); err == nil {
+		val = out.Data.Value == "true" || out.Data.Value == `"true"`
+	}
+	boolParamCache.Lock()
+	boolParamCache.m[ck] = paramEntry{val: val, at: time.Now()}
+	boolParamCache.Unlock()
+	return val
 }

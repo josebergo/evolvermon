@@ -16,6 +16,7 @@ import (
 	mesapi "github.com/evolvermon/evolvermon/internal/mes/api"
 	wmsapi "github.com/evolvermon/evolvermon/internal/wms/api"
 	integrationapi "github.com/evolvermon/evolvermon/internal/integration/api"
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/crud"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
@@ -225,6 +226,17 @@ func registerPlatform(r *gin.Engine, v1 *gin.RouterGroup, db *gorm.DB, jm *jwtx.
 		// FR-PLT-012：存在未完结单据禁止停用
 		BeforeUpdate: func(db *gorm.DB, ac *middleware.AuthCtx, obj *model.Factory, old *model.Factory) error {
 			if obj.Status == 0 && old.Status == 1 {
+				// Phase 2 分库：core 单据表不可直查 → /internal/core/factory-check（Lite 直查不变）
+				if coreURL := os.Getenv("EM_CORE_URL"); coreURL != "" {
+					open, err := client.FactoryCheck(coreURL, os.Getenv("EM_INTERNAL_TOKEN"), old.ID)
+					if err != nil {
+						return err
+					}
+					if open > 0 {
+						return response.NewBiz(response.ErrBiz, fmt.Sprintf("存在未完结单据 %d，禁止停用", open))
+					}
+					return nil
+				}
 				var wo, so int64
 				db.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('draft','released','running','paused','finished')", ac.TenantID, old.ID).Count(&wo)
 				db.Model(&model.StockOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('draft','doing')", ac.TenantID, old.ID).Count(&so)
@@ -234,12 +246,6 @@ func registerPlatform(r *gin.Engine, v1 *gin.RouterGroup, db *gorm.DB, jm *jwtx.
 			}
 			return nil
 		},
-	})
-	crudRes[model.Warehouse](v1, db, "plt:warehouse", "/warehouses", crud.Options[model.Warehouse]{
-		FactoryScoped: true, SearchCols: []string{"code", "name"}, FilterCols: []string{"type"},
-	})
-	crudRes[model.Location](v1, db, "plt:location", "/locations", crud.Options[model.Location]{
-		FactoryScoped: true, SearchCols: []string{"code"}, FilterCols: []string{"warehouse_id"},
 	})
 	crudRes[model.User](v1, db, "plt:user", "/users", crud.Options[model.User]{
 		FactoryScoped: false, SearchCols: []string{"username", "real_name"}, FilterCols: []string{"status"},
@@ -451,5 +457,10 @@ func registerMaster(v1 *gin.RouterGroup, db *gorm.DB) {
 	crudRes[model.Supplier](v1, db, "erp:supplier", "/suppliers", crud.Options[model.Supplier]{
 		FactoryScoped: false, SearchCols: []string{"code", "name"},
 	})
-
+	crudRes[model.Warehouse](v1, db, "plt:warehouse", "/warehouses", crud.Options[model.Warehouse]{
+		FactoryScoped: true, SearchCols: []string{"code", "name"}, FilterCols: []string{"type"},
+	})
+	crudRes[model.Location](v1, db, "plt:location", "/locations", crud.Options[model.Location]{
+		FactoryScoped: true, SearchCols: []string{"code"}, FilterCols: []string{"warehouse_id"},
+	})
 }

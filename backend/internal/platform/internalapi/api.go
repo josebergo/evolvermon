@@ -4,6 +4,7 @@ package internalapi
 
 import (
 	"net/http"
+	"strconv"
 	"os"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ func (a *API) Register(r *gin.Engine) {
 	g.GET("/auth-context", a.AuthContext)
 	g.POST("/docno", a.DocNo)
 	g.POST("/audit", a.Audit)
+	g.GET("/factories", a.Factories)
+	g.POST("/param", a.Param)
+	g.GET("/param", a.GetParam)
 }
 
 func internalToken() gin.HandlerFunc {
@@ -128,6 +132,47 @@ func (a *API) Audit(c *gin.Context) {
 		Action: req.Action, ObjectType: req.ObjType, ObjectID: req.ObjID, ObjectDesc: req.ObjDesc,
 		Before: req.Before, After: req.After, CreatedAt: time.Now(),
 	}).Error
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, gin.H{"ok": true})
+}
+
+// Factories 活跃工厂列表（scheduler 定时 MRP / core 调拨读取）。
+func (a *API) Factories(c *gin.Context) {
+	var rows []model.Factory
+	a.DB.Select("id, tenant_id, code, name, status").Where("status=1").Find(&rows)
+	response.OK2(c, gin.H{"list": rows})
+}
+
+// GetParam 读参数（core 过账负库存开关等；返回 value 字符串）。
+func (a *API) GetParam(c *gin.Context) {
+	tenantID, _ := strconv.ParseInt(c.Query("tenantId"), 10, 64)
+	var p model.SysParam
+	if err := a.DB.Where("tenant_id=? AND factory_id IS NULL AND key=?", tenantID, c.Query("key")).Order("id DESC").First(&p).Error; err != nil {
+		response.OK2(c, gin.H{"value": ""}) // 未配置=默认 false
+		return
+	}
+	response.OK2(c, gin.H{"value": p.Value})
+}
+
+// Param 写系统参数（scheduler MRP 摘要等；UPSERT）。
+func (a *API) Param(c *gin.Context) {
+	var req struct {
+		TenantID  int64  `json:"tenantId"`
+		FactoryID int64  `json:"factoryId"`
+		Key       string `json:"key"`
+		Value     string `json:"value"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.TenantID == 0 || req.Key == "" {
+		response.Fail(c, response.NewBiz(response.ErrParam, "tenantId/key required"))
+		return
+	}
+	err := a.DB.Exec(`INSERT INTO platform.sys_params(tenant_id, factory_id, key, value, updated_at)
+		VALUES(?,?,?,?,'now()')
+		ON CONFLICT (tenant_id, factory_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
+		req.TenantID, req.FactoryID, req.Key, req.Value).Error
 	if err != nil {
 		response.Fail(c, err)
 		return

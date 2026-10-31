@@ -13,6 +13,7 @@ import (
 	"github.com/evolvermon/evolvermon/internal/infra"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
 	"github.com/evolvermon/evolvermon/internal/pkg/logx"
+	piapi "github.com/evolvermon/evolvermon/internal/platform/internalapi"
 	"github.com/evolvermon/evolvermon/internal/router"
 	"github.com/evolvermon/evolvermon/seed"
 )
@@ -33,14 +34,14 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		version, err := data.MigrateVersioned(db)
+		version, err := data.MigrateVersioned(db, "identity")
 		if err != nil {
 			log.Fatalf("migrate failed: %v", err)
 		}
 		log.Printf("schema at version %d", version)
 	}
 	if cfg.SeedDemo {
-		if err := seed.Run(db); err != nil {
+		if err := seed.RunPlatform(db); err != nil {
 			log.Printf("seed failed (non-fatal): %v", err)
 		}
 	}
@@ -53,6 +54,7 @@ func main() {
 	_ = in // identity 自身不消费总线；保持端口层装配校验（fail-fast）
 
 	r := router.New(db, jm, "platform")
+	(&piapi.API{DB: db}).Register(r) // /internal/identity/*（附录 C：认证上下文/单号/审计）
 	addr := getenvDefault("EM_HTTP_ADDR", ":8081")
 	log.Printf("identity listening on %s", addr)
 	if err := r.Run(addr); err != nil {

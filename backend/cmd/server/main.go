@@ -12,6 +12,7 @@ import (
 
 	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/wire"
+	ciapi "github.com/evolvermon/evolvermon/internal/core/internalapi"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
@@ -51,7 +52,11 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		version, err := data.MigrateVersioned(db)
+		migProfile := "all"
+	if roles == "core" {
+		migProfile = "core"
+	}
+	version, err := data.MigrateVersioned(db, migProfile)
 		if err != nil {
 			log.Fatalf("migrate failed: %v", err)
 		}
@@ -62,9 +67,16 @@ func main() {
 	} else {
 		log.Printf("migrate skipped (EM_MIGRATE=0)")
 	}
-	if cfg.SeedDemo && (roles == "all" || roles == "platform") {
-		if err := seed.Run(db); err != nil {
-			log.Printf("seed failed (non-fatal): %v", err)
+	if cfg.SeedDemo {
+		if roles == "all" || roles == "platform" {
+			if err := seed.Run(db); err != nil {
+				log.Printf("seed failed (non-fatal): %v", err)
+			}
+		}
+		if roles == "core" {
+			if err := seed.RunCoreDemo(db); err != nil { // 分库形态：core 库演示主数据
+				log.Printf("seed core demo failed (non-fatal): %v", err)
+			}
 		}
 	}
 
@@ -84,11 +96,18 @@ func main() {
 	client.UseCache(in.Cache) // Phase 2.3：跨服务读通道缓存端口
 
 	// Micro 分工：webhook 投递 worker 只在聚合/集成进程跑；定时 MRP 在聚合/scheduler 进程跑
-	if roles == "all" || roles == "integration" {
+	if roles == "all" {
 		events.StartWorker(db)
-		outbox.StartRelay(db, in.Broker) // Phase 2.2：Micro 由 integration 进程投递
+		outbox.StartRelay(db, in.Broker) // Lite：聚合进程内闭环
+	}
+	if roles == "core" {
+		events.UseRemoteFanout(true)     // 分库：webhook 扇出由 integration 拉取
+		outbox.StartRelay(db, in.Broker) // core outbox relay 在 core 库
 	}
 	r := router.New(db, jm, routerDomains(roles)...)
+	if roles == "core" || roles == "all" {
+		(&ciapi.API{DB: db}).Register(r) // /internal/core/*：events 拉取 + factory-check
+	}
 
 	// 定时自动 MRP（FR-ERP-077 M2）：EM_MRP_AUTO_MINUTES>0 时启用，逐工厂运行并记录摘要
 	if mins := config.MrpAutoMinutes(); mins > 0 && (roles == "all" || roles == "scheduler") {

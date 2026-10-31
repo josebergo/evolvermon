@@ -68,7 +68,20 @@ func menus() []menuSeed {
 	}
 }
 
-func Run(db *gorm.DB) error {
+// RunPlatform identity 库种子（分库形态）：菜单/租户/超管/角色/工厂/演示用户/单号规则/参数（幂等）。
+func RunPlatform(db *gorm.DB) error { return runPlatform(db) }
+
+// RunCoreDemo core 库演示数据种子（分库形态）：master/mes 表（假定演示租户/工厂已在 identity 库建立，ID=1/2）。
+func RunCoreDemo(db *gorm.DB) error { return seedCorePart(db, 1) }
+
+func Run(db *gorm.DB) error { // Lite：platform + core 演示数据
+	if err := runPlatform(db); err != nil {
+		return err
+	}
+	return seedCorePart(db, 1)
+}
+
+func runPlatform(db *gorm.DB) error {
 	// 菜单 upsert
 	for _, m := range menus() {
 		var cnt int64
@@ -102,7 +115,7 @@ func Run(db *gorm.DB) error {
 	if err := seedRoles(db, tenant.ID); err != nil {
 		return err
 	}
-	if err := seedFactoryData(db, tenant.ID); err != nil {
+	if err := seedPlatformPart(db, tenant.ID); err != nil {
 		return err
 	}
 	// 超管默认挂到第一家工厂，保证登录后有工厂上下文（否则 factory_id=0 造成数据错位）
@@ -114,7 +127,6 @@ func Run(db *gorm.DB) error {
 			}
 		}
 	}
-	seedDict(db, tenant.ID)
 	return nil
 }
 
@@ -154,7 +166,8 @@ func seedRoles(db *gorm.DB, tenantID int64) error {
 	return nil
 }
 
-func seedFactoryData(db *gorm.DB, tenantID int64) error {
+// seedPlatformPart platform 表种子（identity 库）：工厂/演示用户/单号规则/参数。
+func seedPlatformPart(db *gorm.DB, tenantID int64) error {
 	var cnt int64
 	db.Model(&model.Factory{}).Where("tenant_id=?", tenantID).Count(&cnt)
 	if cnt > 0 {
@@ -168,17 +181,6 @@ func seedFactoryData(db *gorm.DB, tenantID int64) error {
 	}
 	db.Create(&sz)
 
-	for _, f := range []model.Factory{dg, sz} {
-		for _, w := range []model.Warehouse{
-			{Code: f.Code + "-RAW", Name: f.Name + "·原料仓", Type: model.WhRaw, Status: 1},
-			{Code: f.Code + "-FG", Name: f.Name + "·成品仓", Type: model.WhFG, Status: 1},
-			{Code: f.Code + "-SEMI", Name: f.Name + "·半成品仓", Type: model.WhSemi, Status: 1},
-			{Code: f.Code + "-DEF", Name: f.Name + "·不良品仓", Type: model.WhDefect, Status: 1},
-		} {
-			w.TenantID, w.FactoryID = tenantID, &f.ID
-			db.Create(&w)
-		}
-	}
 
 	// 演示用户
 	hash, _ := bcrypt.GenerateFromPassword([]byte("Demo@123"), bcrypt.DefaultCost)
@@ -213,7 +215,26 @@ func seedFactoryData(db *gorm.DB, tenantID int64) error {
 	db.Create(&model.SysParam{TenantID: tenantID, Key: "allow_negative_stock", Value: `"false"`, Remark: "允许负库存"})
 	db.Create(&model.SysParam{TenantID: tenantID, Key: "default_timezone", Value: `"Asia/Shanghai"`, Remark: "默认时区"})
 
+	return nil
+}
+
+// seedCorePart core 库种子（master/mes 表）：仓库/演示主数据/不良字典。工厂 ID 为逻辑引用（identity 库自增 1/2）。
+func seedCorePart(db *gorm.DB, tenantID int64) error {
+	dg := model.Factory{ID: 1, Code: "DG"}
+	sz := model.Factory{ID: 2, Code: "SZ"}
+	for _, f := range []model.Factory{dg, sz} {
+		for _, w := range []model.Warehouse{
+			{Code: f.Code + "-RAW", Name: f.Name + "·原料仓", Type: model.WhRaw, Status: 1},
+			{Code: f.Code + "-FG", Name: f.Name + "·成品仓", Type: model.WhFG, Status: 1},
+			{Code: f.Code + "-SEMI", Name: f.Name + "·半成品仓", Type: model.WhSemi, Status: 1},
+			{Code: f.Code + "-DEF", Name: f.Name + "·不良品仓", Type: model.WhDefect, Status: 1},
+		} {
+			w.TenantID, w.FactoryID = tenantID, &f.ID
+			db.Create(&w)
+		}
+	}
 	seedDemoMaster(db, tenantID, &dg)
+	seedDict(db, tenantID)
 	return nil
 }
 

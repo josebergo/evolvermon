@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
 	"github.com/evolvermon/evolvermon/internal/model"
@@ -164,8 +165,26 @@ func (t *TransferAPI) GroupSummary(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrForbidden, "仅租户级角色可查看集团视图"))
 		return
 	}
-	var facs []model.Factory
-	t.DB.Where("tenant_id=? AND status=1", ac.TenantID).Find(&facs)
+	// Phase 2 分库：工厂列表经 identity API（EM_IDENTITY_URL 未设=直查）
+	facs := []client.FactoryLite{}
+	if idc := client.Identity(); idc != nil {
+		fs, err := idc.Factories()
+		if err != nil {
+			response.Fail(c, err)
+			return
+		}
+		for _, f := range fs {
+			if f.TenantID == ac.TenantID {
+				facs = append(facs, f)
+			}
+		}
+	} else {
+		var rows []model.Factory
+		t.DB.Where("tenant_id=? AND status=1", ac.TenantID).Find(&rows)
+		for _, f := range rows {
+			facs = append(facs, client.FactoryLite{ID: f.ID, TenantID: f.TenantID, Code: f.Code, Name: f.Name})
+		}
+	}
 	type facRow struct {
 		FactoryID   int64   `json:"factoryId"`
 		Factory     string  `json:"factory"`

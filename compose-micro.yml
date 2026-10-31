@@ -13,6 +13,7 @@ services:
       POSTGRES_DB: evolvermon
     volumes:
       - pgdata_micro:/var/lib/postgresql/data
+      - ./backend/ops/init-dbs.sql:/docker-entrypoint-initdb.d/10-dbs.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U evolver -d evolvermon"]
       interval: 5s
@@ -20,7 +21,7 @@ services:
       retries: 20
     restart: unless-stopped
 
-  identity: # 迁移+种子责任方（启动顺序第一位）
+  identity: # 迁移+种子责任方（启动顺序第一位；独立 identity 库）
     build: ./backend
     command: ["./identity"]
     environment: &svc_env
@@ -98,11 +99,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  ops-admin: # 统一管理平台（仅内网；compose 驱动经挂载 docker.sock 控制）
+  ops-admin: # 统一管理平台（仅内网；独立 ops 库）
     build: ./backend
     command: ["./ops-admin"]
     environment:
       <<: *svc_env
+      EM_DATABASE_DSN: "host=db port=5432 user=evolver password=evolver_pass_change_me dbname=evolvermon_ops sslmode=disable TimeZone=Asia/Shanghai"
       EM_HTTP_ADDR: ":8090"
       EM_MIGRATE: "0"
       EM_REGISTRY_PATH: "/etc/evolvermon/registry-compose.yml"

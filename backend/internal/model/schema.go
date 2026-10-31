@@ -42,7 +42,7 @@ var tableSchema = map[string]string{
 	"stock_orders": SchemaWms, "stock_reservations": SchemaWms, "stocks": SchemaWms,
 	"stocktaking_lines": SchemaWms, "stocktakings": SchemaWms,
 	// integration
-	"device_telemetries": SchemaIntegration, "webhook_deliveries": SchemaIntegration,
+	"device_telemetries": SchemaIntegration, "integration_pull_cursors": SchemaIntegration, "webhook_deliveries": SchemaIntegration,
 	"webhook_endpoints": SchemaIntegration,
 	// ops（Phase 1.5 ops-admin；Lite 部署同样建表，空置无副作用）
 	"ops_audit_logs": SchemaOps, "ops_alerts": SchemaOps,

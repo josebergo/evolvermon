@@ -26,7 +26,11 @@ type schemaMigration struct {
 func (schemaMigration) TableName() string { return "schema_migrations" }
 
 // MigrateVersioned 执行版本化迁移，返回已应用到的版本号。
-func MigrateVersioned(db *gorm.DB) (int, error) {
+func MigrateVersioned(db *gorm.DB, profile ...string) (int, error) {
+	prof := "all"
+	if len(profile) > 0 {
+		prof = profile[0]
+	}
 	if err := db.AutoMigrate(&schemaMigration{}); err != nil {
 		return 0, err
 	}
@@ -38,7 +42,7 @@ func MigrateVersioned(db *gorm.DB) (int, error) {
 		if err := EnsureSchemas(db); err != nil {
 			return 0, err
 		}
-		if err := Migrate(db); err != nil {
+		if err := MigrateProfile(db, prof); err != nil {
 			return 0, fmt.Errorf("baseline migrate: %w", err)
 		}
 		db.Create(&schemaMigration{Version: 1, Name: "baseline(auto)"})

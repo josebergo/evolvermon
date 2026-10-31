@@ -320,7 +320,7 @@ sleep 1
 req POST /webhooks '{"name":"verifier","url":"http://127.0.0.1:18099/hook","events":"*","secret":"s3cr3t"}' > /dev/null
 WO_EVT=$(req POST /work-orders "{\"materialId\":$FG_ID,\"qty\":10}")
 req POST "/work-orders/$(echo "$WO_EVT" | jget data.id)/release" > /dev/null
-sleep 5
+sleep 12
 DELIV=$(req GET "/webhook-deliveries?status=ok")
 DELIV_OK=$(echo "$DELIV" | jget data.total)
 [ "${DELIV_OK:-0}" -ge 1 ] && ok "Webhook 投递成功 $DELIV_OK 条" || bad "Webhook 未投递: $DELIV"
@@ -386,6 +386,7 @@ echo "$FAC_DIS" | grep -q '"code":3000' && ok "有未结工单的工厂停用被
 
 say "故事32 (补齐) 负库存参数生效"
 req POST /params '{"key":"allow_negative_stock","value":"true"}' > /dev/null
+sleep 6  # 分库形态：core 经 identity API 读参数（5s 缓存过期）
 NS_MAT=$(req GET "/materials?category=raw&page_size=20" | python -c "
 import sys,json
 ms=json.load(sys.stdin)['data']['list']
