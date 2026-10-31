@@ -125,7 +125,7 @@ func (m *MrpAPI) Run(c *gin.Context) {
 	}
 	var bomLines []bomRow
 	m.DB.Raw(`SELECT b.material_id parent_id, l.material_id child_id, l.qty, l.scrap_rate
-		FROM boms b JOIN bom_lines l ON l.bom_id=b.id
+		FROM master.boms b JOIN master.bom_lines l ON l.bom_id=b.id
 		WHERE b.tenant_id=? AND b.status='active' AND b.deleted_at IS NULL`, ac.TenantID).Scan(&bomLines)
 	children := map[int64][]bomRow{}
 	for _, b := range bomLines {

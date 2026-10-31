@@ -179,9 +179,9 @@ func (m *MasterAPI) WhereUsed(c *gin.Context) {
 	}
 	m.DB.Raw(`SELECT b.id bom_id, b.version_no, b.status, b.material_id parent_id,
 		mt.code parent_code, mt.name parent_name, l.qty
-		FROM bom_lines l
-		JOIN boms b ON b.id = l.bom_id AND b.tenant_id = ? AND b.deleted_at IS NULL
-		JOIN materials mt ON mt.id = b.material_id
+		FROM master.bom_lines l
+		JOIN master.boms b ON b.id = l.bom_id AND b.tenant_id = ? AND b.deleted_at IS NULL
+		JOIN master.materials mt ON mt.id = b.material_id
 		WHERE l.material_id = ?`, ac.TenantID, c.Param("id")).Scan(&rows)
 	response.OK2(c, rows)
 }

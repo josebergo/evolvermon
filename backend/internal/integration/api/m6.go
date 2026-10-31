@@ -97,7 +97,7 @@ func (e *ExtAPI) LatestTelemetry(c *gin.Context) {
 	ac := middleware.GetAuth(c)
 	var rows []model.DeviceTelemetry
 	e.DB.Raw(`SELECT DISTINCT ON (device_code, metric) *
-		FROM device_telemetries
+		FROM integration.device_telemetries
 		WHERE tenant_id=? AND factory_id=?
 		ORDER BY device_code, metric, reported_at DESC`, ac.TenantID, ac.FactoryID).Scan(&rows)
 	response.OK2(c, rows)
@@ -124,11 +124,11 @@ func (e *ExtAPI) Insights(c *gin.Context) {
 		Safety float64 `json:"safety"`
 	}
 	e.DB.Raw(`SELECT mt.code, mt.name,
-		COALESCE((SELECT SUM(s.qty_on_hand) FROM stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0) AS on_hand,
+		COALESCE((SELECT SUM(s.qty_on_hand) FROM wms.stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0) AS on_hand,
 		mt.safety_stock AS safety
-		FROM materials mt
+		FROM master.materials mt
 		WHERE mt.tenant_id=? AND mt.status=1 AND mt.safety_stock>0
-		  AND COALESCE((SELECT SUM(s.qty_on_hand) FROM stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0) < mt.safety_stock
+		  AND COALESCE((SELECT SUM(s.qty_on_hand) FROM wms.stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0) < mt.safety_stock
 		LIMIT 10`, ac.FactoryID, ac.TenantID, ac.FactoryID).Scan(&shorts)
 	for _, s := range shorts {
 		out = append(out, insight{"shortage", "high",
@@ -161,8 +161,8 @@ func (e *ExtAPI) Insights(c *gin.Context) {
 		Cap   float64 `json:"cap"`
 	}
 	e.DB.Raw(`SELECT wc.name, COUNT(o.id) AS ops, wc.capacity_per_day AS cap
-		FROM work_centers wc
-		LEFT JOIN wo_operations o ON o.work_center_id=wc.id AND o.status IN ('waiting','assigned','running')
+		FROM master.work_centers wc
+		LEFT JOIN mes.wo_operations o ON o.work_center_id=wc.id AND o.status IN ('waiting','assigned','running')
 		WHERE wc.tenant_id=? AND wc.factory_id=? AND wc.status=1
 		GROUP BY wc.id, wc.name, wc.capacity_per_day ORDER BY ops DESC LIMIT 3`, ac.TenantID, ac.FactoryID).Scan(&loads)
 	for _, l := range loads {

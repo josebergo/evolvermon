@@ -2,6 +2,7 @@
 package data
 
 import (
+	"gorm.io/gorm/schema"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,7 +18,8 @@ import (
 
 func Open(dsn string) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger:         logger.Default.LogMode(logger.Warn),
+		NamingStrategy: domainNaming{base: schema.NamingStrategy{}}, // Phase 0.2：表按域入 schema
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
@@ -103,7 +105,7 @@ func NextDocNo(db *gorm.DB, tenantID int64, docType string) (string, error) {
 		return "", err
 	}
 	var seq int64
-	if err := db.Raw("SELECT current_seq FROM doc_number_rules WHERE id=?", rule.ID).Scan(&seq).Error; err != nil {
+	if err := db.Raw("SELECT current_seq FROM platform.doc_number_rules WHERE id=?", rule.ID).Scan(&seq).Error; err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%s-%s-%0*d", prefix, time.Now().Format("060102"), rule.SeqLen, seq), nil
@@ -119,18 +121,18 @@ func RunScheduledMrp(db *gorm.DB, tenantID, factoryID int64) error {
 	var r row
 	if err := db.Raw(`
 		SELECT COUNT(*) cnt FROM (
-		  SELECT mt.id FROM materials mt
+		  SELECT mt.id FROM master.materials mt
 		  WHERE mt.tenant_id=? AND mt.status=1 AND mt.safety_stock > 0
-		  AND COALESCE((SELECT SUM(s.qty_on_hand) FROM stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0)
-		      + COALESCE((SELECT SUM(po.qty-pol.received_qty) FROM purchase_order_lines pol
-		                 JOIN purchase_orders po ON po.id=pol.purchase_order_id
+		  AND COALESCE((SELECT SUM(s.qty_on_hand) FROM wms.stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0)
+		      + COALESCE((SELECT SUM(po.qty-pol.received_qty) FROM erp.purchase_order_lines pol
+		                 JOIN erp.purchase_orders po ON po.id=pol.purchase_order_id
 		                 WHERE pol.material_id=mt.id AND po.factory_id=? AND po.status IN ('arriving','receiving')),0)
 		      < mt.safety_stock
 		) t`, tenantID, factoryID, factoryID).Scan(&r).Error; err != nil {
 		return err
 	}
 	summary := fmt.Sprintf(`{"shortageMaterials":%d,"ranAt":%q}`, r.Cnt, time.Now().Format(time.RFC3339))
-	db.Exec(`INSERT INTO sys_params(tenant_id, factory_id, key, value, updated_at)
+	db.Exec(`INSERT INTO platform.sys_params(tenant_id, factory_id, key, value, updated_at)
 		VALUES(?,?, 'mrp_last_run', ?, now())
 		ON CONFLICT (tenant_id, factory_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, tenantID, factoryID, summary)
 	return nil
@@ -177,4 +179,41 @@ func BoolParam(db *gorm.DB, tenantID int64, key string) bool {
 		return str == "true" || str == "1"
 	}
 	return false
+}
+
+
+// domainNaming 包装默认命名策略：解析出默认表名后按 model.tableSchema 加 schema 前缀
+// （platform.tenants、master.materials…）。模型上显式 TableName() 的（schema_migrations）不走本策略。
+type domainNaming struct {
+	base schema.NamingStrategy
+}
+
+func (n domainNaming) UniqueName(table, column string) string { return n.base.UniqueName(table, column) }
+
+// SchemaName 返回空：schema 前缀已由 TableName 内联（避免 gorm 再拼一层）。
+func (n domainNaming) SchemaName(table string) string { return "" }
+
+func (n domainNaming) TableName(name string) string {
+	return model.QualifiedTable(n.base.TableName(name))
+}
+
+// 其余命名行为（列名/连接表等）保持默认。
+func (n domainNaming) ColumnName(table, column string) string { return n.base.ColumnName(table, column) }
+func (n domainNaming) JoinTableName(joinTable string) string {
+	return model.QualifiedTable(n.base.JoinTableName(joinTable))
+}
+func (n domainNaming) RelationshipFKName(rel schema.Relationship) string {
+	return n.base.RelationshipFKName(rel)
+}
+func (n domainNaming) CheckerName(table, column string) string { return n.base.CheckerName(table, column) }
+func (n domainNaming) IndexName(table, column string) string   { return n.base.IndexName(table, column) }
+
+// EnsureSchemas 幂等建 schema（迁移 baseline 与升级 0002 前调用）。
+func EnsureSchemas(db *gorm.DB) error {
+	for _, sc := range model.Schemas() {
+		if err := db.Exec("CREATE SCHEMA IF NOT EXISTS " + sc).Error; err != nil {
+			return fmt.Errorf("create schema %s: %w", sc, err)
+		}
+	}
+	return nil
 }

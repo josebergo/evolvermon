@@ -4,6 +4,7 @@
 package data
 
 import (
+	"strings"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,7 +34,10 @@ func MigrateVersioned(db *gorm.DB) (int, error) {
 	db.Order("version DESC").First(&last)
 
 	if last.Version == 0 {
-		// 基线：全量建表
+		// 基线：全量建表（先建域 schema，Phase 0.2）
+		if err := EnsureSchemas(db); err != nil {
+			return 0, err
+		}
 		if err := Migrate(db); err != nil {
 			return 0, fmt.Errorf("baseline migrate: %w", err)
 		}
@@ -110,43 +114,33 @@ func splitStatements(sql string) []string {
 	cur := ""
 	inComment := false
 	for _, line := range regexp.MustCompile(`\r?\n`).Split(sql, -1) {
-		trimmed := ""
-		for _, ch := range line {
-			if inComment {
-				if ch == '/' {
-					inComment = false
-				}
+		// 块注释 /* */（跨行状态）
+		if inComment {
+			if idx := strings.Index(line, "*/"); idx >= 0 {
+				line = line[idx+2:]
+				inComment = false
+			} else {
 				continue
 			}
-			if ch == '-' && len(trimmed) > 0 && trimmed[len(trimmed)-1] == '-' {
-				break // 行注释
-			}
-			if ch == '/' && len(trimmed) > 0 && trimmed[len(trimmed)-1] == '/' {
-				inComment = true
-				trimmed = trimmed[:len(trimmed)-1]
-				continue
-			}
-			trimmed += string(ch)
 		}
-		cur += trimmed + "\n"
+		// 行注释 --（含行首）
+		if idx := strings.Index(line, "--"); idx >= 0 {
+			line = line[:idx]
+		}
+		// 行内未闭合块注释
+		if idx := strings.Index(line, "/*"); idx >= 0 {
+			line = line[:idx]
+			inComment = true
+		}
+		cur += line + "\n"
 	}
-	for _, stmt := range regexp.MustCompile(`;`).Split(cur, -1) {
-		if s := trimSpace(stmt); s != "" {
+	for _, stmt := range strings.Split(cur, ";") {
+		if s := strings.TrimSpace(stmt); s != "" {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
-func trimSpace(s string) string {
-	start, end := 0, len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n') {
-		end--
-	}
-	return s[start:end]
-}
 
 var _ = model.Tenant{} // 保持 model 引用（baseline 复用 Migrate）

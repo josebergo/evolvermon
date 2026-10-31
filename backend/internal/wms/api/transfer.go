@@ -181,8 +181,8 @@ func (t *TransferAPI) GroupSummary(c *gin.Context) {
 		r.FactoryID, r.Factory = f.ID, f.Name
 		t.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('released','running','paused')", ac.TenantID, f.ID).Count(&r.WoActive)
 		t.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('released','running','paused') AND plan_end_at < now()", ac.TenantID, f.ID).Count(&r.WoOverdue)
-		t.DB.Raw(`SELECT COALESCE(SUM(qty_ok),0) FROM production_reports WHERE factory_id=? AND reported_at >= current_date`, f.ID).Scan(&r.TodayOk)
-		t.DB.Raw(`SELECT COALESCE(SUM(s.qty_on_hand * m.price),0) FROM stocks s JOIN materials m ON m.id=s.material_id WHERE s.factory_id=?`, f.ID).Scan(&r.StockValue)
+		t.DB.Raw(`SELECT COALESCE(SUM(qty_ok),0) FROM mes.production_reports WHERE factory_id=? AND reported_at >= current_date`, f.ID).Scan(&r.TodayOk)
+		t.DB.Raw(`SELECT COALESCE(SUM(s.qty_on_hand * m.price),0) FROM wms.stocks s JOIN master.materials m ON m.id=s.material_id WHERE s.factory_id=?`, f.ID).Scan(&r.StockValue)
 		t.DB.Model(&model.StockOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('draft','doing')", ac.TenantID, f.ID).Count(&r.PendingDocs)
 		rows = append(rows, r)
 	}

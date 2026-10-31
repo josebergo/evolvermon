@@ -345,10 +345,10 @@ func (m *MesAPI) ListOps(c *gin.Context) {
 		}
 		q = q.Where("work_order_id=?", v)
 	} else if c.Query("mine") == "1" {
-		q = q.Joins("JOIN work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ? AND w.deleted_at IS NULL", ac.TenantID).
+		q = q.Joins("JOIN mes.work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ? AND w.deleted_at IS NULL", ac.TenantID).
 			Where("assignee_user_id=?", ac.UserID)
 	} else {
-		q = q.Joins("JOIN work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ? AND w.factory_id = ? AND w.deleted_at IS NULL", ac.TenantID, ac.FactoryID)
+		q = q.Joins("JOIN mes.work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ? AND w.factory_id = ? AND w.deleted_at IS NULL", ac.TenantID, ac.FactoryID)
 	}
 	var ops []model.WoOperation
 	var total int64
@@ -368,7 +368,7 @@ func (m *MesAPI) AssignOp(c *gin.Context) {
 	}
 	var op model.WoOperation
 	// WoOperation 无租户列：先验证所属工单租户
-	if err := m.DB.Joins("JOIN work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ?", ac.TenantID).
+	if err := m.DB.Joins("JOIN mes.work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ?", ac.TenantID).
 		First(&op, c.Param("id")).Error; err != nil {
 		response.Fail(c, response.NewBiz(response.ErrParam, "工序不存在"))
 		return
@@ -386,7 +386,7 @@ func (m *MesAPI) StartOp(c *gin.Context) {
 	ac := middleware.GetAuth(c)
 	var op model.WoOperation
 	// WoOperation 无租户列：先验证所属工单租户
-	if err := m.DB.Joins("JOIN work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ?", ac.TenantID).
+	if err := m.DB.Joins("JOIN mes.work_orders w ON w.id = wo_operations.work_order_id AND w.tenant_id = ?", ac.TenantID).
 		First(&op, c.Param("id")).Error; err != nil {
 		response.Fail(c, response.NewBiz(response.ErrParam, "工序不存在"))
 		return
@@ -634,14 +634,14 @@ func (m *MesAPI) ReturnMaterial(c *gin.Context) {
 	}
 	var rows []row
 	m.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) AS picked
-		FROM stock_order_lines l
-		JOIN stock_orders o ON o.id=l.stock_order_id
+		FROM wms.stock_order_lines l
+		JOIN wms.stock_orders o ON o.id=l.stock_order_id
 		WHERE o.tenant_id=? AND o.source_type='picking' AND o.source_doc_id=? AND o.status='done'
 		GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rows)
 	var rets []row
 	m.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) AS picked
-		FROM stock_order_lines l
-		JOIN stock_orders o ON o.id=l.stock_order_id
+		FROM wms.stock_order_lines l
+		JOIN wms.stock_orders o ON o.id=l.stock_order_id
 		WHERE o.tenant_id=? AND o.source_type='return' AND o.source_doc_id=? AND o.status IN ('done','doing')
 		GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rets)
 	returned := map[int64]float64{}
@@ -666,8 +666,8 @@ func (m *MesAPI) ReturnMaterial(c *gin.Context) {
 	lastBatch := map[int64]string{}
 	var moves []model.StockMovement
 	m.DB.Raw(`SELECT DISTINCT ON (material_id) material_id, batch_no
-		FROM stock_movements WHERE tenant_id=? AND biz_type='领料出库'
-		AND source_doc_id IN (SELECT id FROM stock_orders WHERE source_type='picking' AND source_doc_id=?)
+		FROM wms.stock_movements WHERE tenant_id=? AND biz_type='领料出库'
+		AND source_doc_id IN (SELECT id FROM wms.stock_orders WHERE source_type='picking' AND source_doc_id=?)
 		ORDER BY material_id, id DESC`, ac.TenantID, wo.ID).Scan(&moves)
 	for _, mv := range moves {
 		lastBatch[mv.MaterialID] = mv.BatchNo

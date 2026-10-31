@@ -129,7 +129,7 @@ func Auth(jm *jwtx.Manager, db *gorm.DB) gin.HandlerFunc {
 			ac.DataScope = model.ScopeTenant
 		} else {
 			var roles []model.Role
-			db.Joins("JOIN user_roles ur ON ur.role_id = roles.id AND ur.user_id = ?", user.ID).
+			db.Joins("JOIN platform.user_roles ur ON ur.role_id = roles.id AND ur.user_id = ?", user.ID).
 				Where("roles.status = 1").Find(&roles)
 			scope := model.ScopeSelf
 			for _, r := range roles {

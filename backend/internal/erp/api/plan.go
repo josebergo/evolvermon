@@ -46,7 +46,7 @@ func (p *PlanAPI) Atp(c *gin.Context) {
 		Date *time.Time
 	}
 	p.DB.Raw(`SELECT COALESCE(SUM(l.qty-l.received_qty),0) qty, MIN(l.delivery_date) date
-		FROM purchase_order_lines l JOIN purchase_orders po ON po.id=l.purchase_order_id
+		FROM erp.purchase_order_lines l JOIN erp.purchase_orders po ON po.id=l.purchase_order_id
 		WHERE po.tenant_id=? AND po.factory_id=? AND l.material_id=? AND po.status IN ('arriving','receiving')`,
 		ac.TenantID, ac.FactoryID, matID).Scan(&inTransit)
 	// 在制：未完工工单剩余产出
@@ -56,7 +56,7 @@ func (p *PlanAPI) Atp(c *gin.Context) {
 	wip := a.Q
 	// 其他在手需求（其他已审核订单未发量）
 	p.DB.Model(&model.SalesOrderLine{}).
-		Joins("JOIN sales_orders so ON so.id = sales_order_lines.sales_order_id AND so.status IN ('audited','partial')").
+		Joins("JOIN erp.sales_orders so ON so.id = sales_order_lines.sales_order_id AND so.status IN ('audited','partial')").
 		Select("COALESCE(SUM(sales_order_lines.qty - sales_order_lines.shipped_qty),0) q").
 		Where("sales_order_lines.material_id = ?", matID).Scan(&a)
 	demand := a.Q
@@ -249,8 +249,8 @@ func (p *PlanAPI) DispatchBoard(c *gin.Context) {
 		SUM(CASE WHEN o.status='assigned' THEN 1 ELSE 0 END) assigned,
 		SUM(CASE WHEN o.status='running' THEN 1 ELSE 0 END) running,
 		COALESCE(SUM(o.qty_ok),0) done_today
-		FROM work_centers wc
-		LEFT JOIN wo_operations o ON o.work_center_id=wc.id
+		FROM master.work_centers wc
+		LEFT JOIN mes.wo_operations o ON o.work_center_id=wc.id
 		WHERE wc.tenant_id=? AND wc.factory_id=? AND wc.status=1
 		GROUP BY wc.id, wc.name ORDER BY wc.id`, ac.TenantID, ac.FactoryID).Scan(&rows)
 	response.OK2(c, rows)

@@ -61,7 +61,7 @@ func (b *BoardAPI) KanbanToday(c *gin.Context) {
 		QtyDefect   float64 `json:"qtyDefect"`
 	}
 	b.DB.Raw(`SELECT r.work_order_id, w.doc_no, SUM(r.qty_ok) AS qty_ok, SUM(r.qty_defect) AS qty_defect
-		FROM production_reports r JOIN work_orders w ON w.id=r.work_order_id
+		FROM mes.production_reports r JOIN mes.work_orders w ON w.id=r.work_order_id
 		WHERE r.factory_id=? AND r.reported_at >= ?
 		GROUP BY r.work_order_id, w.doc_no ORDER BY qty_ok DESC`, ac.FactoryID, start).Scan(&rows)
 	var totalOK, totalDefect float64
@@ -97,7 +97,7 @@ func (b *BoardAPI) DashboardSummary(c *gin.Context) {
 		Where("status IN ('released','running','paused') AND plan_end_at < now()").Count(&counts.WoOverdue)
 	b.DB.Model(&model.PurchaseOrder{}).Scopes(sc).Where("status IN ('arriving','receiving')").Count(&counts.PoArriving)
 	b.DB.Model(&model.PurchaseOrder{}).Scopes(sc).
-		Where("status IN ('arriving','receiving') AND EXISTS (SELECT 1 FROM purchase_order_lines l WHERE l.purchase_order_id = purchase_orders.id AND l.delivery_date < now())").
+		Where("status IN ('arriving','receiving') AND EXISTS (SELECT 1 FROM erp.purchase_order_lines l WHERE l.purchase_order_id = purchase_orders.id AND l.delivery_date < now())").
 		Count(&counts.PoOverdue)
 	b.DB.Model(&model.StockOrder{}).Scopes(sc).Where("status IN ('draft','doing') AND doc_type='rcv'").Count(&counts.RcvTodo)
 	b.DB.Model(&model.StockOrder{}).Scopes(sc).Where("status IN ('draft','doing') AND doc_type='shp'").Count(&counts.ShpTodo)
@@ -113,8 +113,8 @@ func (b *BoardAPI) DashboardSummary(c *gin.Context) {
 		Safety float64 `json:"safety"`
 	}
 	b.DB.Raw(`SELECT mt.id, mt.code, mt.name, COALESCE(s.q,0) AS on_hand, mt.safety_stock AS safety
-		FROM materials mt
-		LEFT JOIN (SELECT material_id, SUM(qty_on_hand) AS q FROM stocks WHERE factory_id=? GROUP BY material_id) s
+		FROM master.materials mt
+		LEFT JOIN (SELECT material_id, SUM(qty_on_hand) AS q FROM wms.stocks WHERE factory_id=? GROUP BY material_id) s
 		  ON s.material_id = mt.id
 		WHERE mt.tenant_id=? AND mt.status=1 AND mt.safety_stock > 0 AND COALESCE(s.q,0) < mt.safety_stock
 		LIMIT 20`, ac.FactoryID, ac.TenantID).Scan(&alerts)
@@ -125,7 +125,7 @@ func (b *BoardAPI) DashboardSummary(c *gin.Context) {
 		QtyOk float64 `json:"qtyOk"`
 	}
 	b.DB.Raw(`SELECT to_char(reported_at,'MM-DD') AS day, SUM(qty_ok) AS qty_ok
-		FROM production_reports WHERE factory_id=? AND reported_at > now() - interval '7 days'
+		FROM mes.production_reports WHERE factory_id=? AND reported_at > now() - interval '7 days'
 		GROUP BY 1 ORDER BY 1`, ac.FactoryID).Scan(&trend)
 
 	response.OK2(c, gin.H{"counts": counts, "stockAlerts": alerts, "reportTrend": trend})

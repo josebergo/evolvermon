@@ -225,9 +225,9 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 		BeforeUpdate: func(db *gorm.DB, ac *middleware.AuthCtx, obj *model.Material, old *model.Material) error {
 			if obj.Status == 0 && old.Status == 1 {
 				var so, po, wo int64
-				db.Raw(`SELECT COUNT(*) FROM sales_order_lines l JOIN sales_orders o ON o.id=l.sales_order_id
+				db.Raw(`SELECT COUNT(*) FROM erp.sales_order_lines l JOIN erp.sales_orders o ON o.id=l.sales_order_id
 					WHERE l.material_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, old.ID).Scan(&so)
-				db.Raw(`SELECT COUNT(*) FROM purchase_order_lines l JOIN purchase_orders o ON o.id=l.purchase_order_id
+				db.Raw(`SELECT COUNT(*) FROM erp.purchase_order_lines l JOIN erp.purchase_orders o ON o.id=l.purchase_order_id
 					WHERE l.material_id=? AND o.status IN ('draft','arriving','receiving') AND o.deleted_at IS NULL`, old.ID).Scan(&po)
 				db.Model(&model.WorkOrder{}).Where("tenant_id=? AND material_id=? AND status IN ('draft','released','running','paused')", ac.TenantID, old.ID).Count(&wo)
 				if so+po+wo > 0 {

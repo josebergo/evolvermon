@@ -281,7 +281,7 @@ func (w *WmsAPI) PostLines(c *gin.Context) {
 		}
 		// 状态推进
 		var remain int64
-		tx.Raw(`SELECT COUNT(*) FROM stock_order_lines WHERE stock_order_id=? AND qty - done_qty > 1e-9`, order.ID).Scan(&remain)
+		tx.Raw(`SELECT COUNT(*) FROM wms.stock_order_lines WHERE stock_order_id=? AND qty - done_qty > 1e-9`, order.ID).Scan(&remain)
 		status := model.SkDoing
 		if remain == 0 {
 			status = model.SkDone
@@ -410,7 +410,7 @@ func (w *WmsAPI) writeBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.Stoc
 		var so model.SalesOrder
 		if err := tx.First(&so, order.SourceDocID).Error; err == nil {
 			var remain int64
-			tx.Raw("SELECT COUNT(*) FROM sales_order_lines WHERE sales_order_id=? AND qty - shipped_qty > 1e-9", so.ID).Scan(&remain)
+			tx.Raw("SELECT COUNT(*) FROM erp.sales_order_lines WHERE sales_order_id=? AND qty - shipped_qty > 1e-9", so.ID).Scan(&remain)
 			st := model.StPartial
 			if remain == 0 {
 				st = model.StDone
@@ -438,7 +438,7 @@ func (w *WmsAPI) writeBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.Stoc
 		var po model.PurchaseOrder
 		if err := tx.First(&po, order.SourceDocID).Error; err == nil {
 			var remain int64
-			tx.Raw("SELECT COUNT(*) FROM purchase_order_lines WHERE purchase_order_id=? AND qty - received_qty > 1e-9", po.ID).Scan(&remain)
+			tx.Raw("SELECT COUNT(*) FROM erp.purchase_order_lines WHERE purchase_order_id=? AND qty - received_qty > 1e-9", po.ID).Scan(&remain)
 			st := model.StReceiving
 			if remain == 0 {
 				st = model.StDone

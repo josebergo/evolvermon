@@ -125,7 +125,7 @@ func (a *AuthAPI) Profile(c *gin.Context) {
 	var factories []model.Factory
 	q := a.DB.Where("tenant_id=? AND status=1", ac.TenantID)
 	if !ac.IsSuper && ac.DataScope == model.ScopeFactory {
-		q = a.DB.Joins("JOIN user_factories uf ON uf.factory_id = factories.id AND uf.user_id=?", ac.UserID).
+		q = a.DB.Joins("JOIN platform.user_factories uf ON uf.factory_id = factories.id AND uf.user_id=?", ac.UserID).
 			Where("factories.tenant_id=? AND factories.status=1", ac.TenantID)
 	}
 	q.Find(&factories)
