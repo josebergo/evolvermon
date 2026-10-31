@@ -3,6 +3,7 @@ package api
 // MRP：全量净需求计算（FR-ERP-070~077；算法见 core-flows.md §4，M1 简化版）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"time"
@@ -16,7 +17,10 @@ import (
 	"github.com/evolvermon/evolvermon/internal/pkg/response"
 )
 
-type MrpAPI struct{ DB *gorm.DB }
+type MrpAPI struct {
+	DB *gorm.DB
+	Master client.MasterData // Phase 2.4：主数据读通道（nil=按环境装配，Lite=直连）
+}
 
 type MrpSuggestion struct {
 	MaterialID   int64     `json:"materialId"`
@@ -124,9 +128,19 @@ func (m *MrpAPI) Run(c *gin.Context) {
 		Scrap    float64
 	}
 	var bomLines []bomRow
-	m.DB.Raw(`SELECT b.material_id parent_id, l.material_id child_id, l.qty, l.scrap_rate
-		FROM master.boms b JOIN master.bom_lines l ON l.bom_id=b.id
-		WHERE b.tenant_id=? AND b.status='active' AND b.deleted_at IS NULL`, ac.TenantID).Scan(&bomLines)
+	md := m.Master
+	if md == nil {
+		md = client.NewMaster(m.DB) // 未注入时按环境装配（Lite=直连）
+	}
+	be, berr := md.BomEdges(c.Request.Context(), ac.TenantID)
+	if berr != nil {
+		response.Fail(c, berr)
+		return
+	}
+	bomLines = make([]bomRow, 0, len(be))
+	for _, e := range be {
+		bomLines = append(bomLines, bomRow{ParentID: e.ParentID, ChildID: e.ChildID, Qty: e.Qty, Scrap: e.Scrap})
+	}
 	children := map[int64][]bomRow{}
 	for _, b := range bomLines {
 		children[b.ParentID] = append(children[b.ParentID], b)

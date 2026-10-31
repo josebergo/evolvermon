@@ -68,3 +68,6 @@ ALTER TABLE IF EXISTS public.webhook_endpoints SET SCHEMA integration;
 -- ops（Phase 1.5 新增；存量库由 ops-admin AutoMigrate 直建于 schema，此处幂等空转）
 ALTER TABLE IF EXISTS public.ops_audit_logs SET SCHEMA ops;
 ALTER TABLE IF EXISTS public.ops_alerts SET SCHEMA ops;
+-- 事件一致性底座（Phase 2.2 新增；存量库由 baseline 外 AutoMigrate 兜底，此处幂等空转）
+ALTER TABLE IF EXISTS public.outbox_messages SET SCHEMA platform;
+ALTER TABLE IF EXISTS public.consumed_messages SET SCHEMA platform;

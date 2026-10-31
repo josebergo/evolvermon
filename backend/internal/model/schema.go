@@ -24,6 +24,7 @@ var tableSchema = map[string]string{
 	"factories": SchemaPlatform, "idempotency_keys": SchemaPlatform, "menus": SchemaPlatform,
 	"roles": SchemaPlatform, "sys_params": SchemaPlatform, "tenants": SchemaPlatform,
 	"user_factories": SchemaPlatform, "user_roles": SchemaPlatform, "users": SchemaPlatform,
+	"outbox_messages": SchemaPlatform, "consumed_messages": SchemaPlatform,
 	// master
 	"bom_lines": SchemaMaster, "boms": SchemaMaster, "customers": SchemaMaster,
 	"locations": SchemaMaster, "materials": SchemaMaster, "routing_ops": SchemaMaster,

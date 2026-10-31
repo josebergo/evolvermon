@@ -17,6 +17,7 @@ import (
 
 	"github.com/evolvermon/evolvermon/internal/infra"
 	"github.com/evolvermon/evolvermon/internal/model"
+	"github.com/evolvermon/evolvermon/internal/outbox"
 
 	"github.com/google/uuid"
 )
@@ -35,6 +36,10 @@ func Publish(db *gorm.DB, tenantID int64, event string, payload any) {
 		return
 	}
 	publishBus(tenantID, event, body)
+	// Phase 2.2：投递箱双写（至少一次；relay 推 Broker，消费方按 messageId 幂等）
+	if _, err := outbox.Save(db, tenantID, event, body); err != nil {
+		log.Printf("[events] outbox save %s: %v", event, err)
+	}
 	var eps []model.WebhookEndpoint
 	db.Where("tenant_id=? AND status=1", tenantID).Find(&eps)
 	for _, ep := range eps {

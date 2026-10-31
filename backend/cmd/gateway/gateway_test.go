@@ -5,7 +5,7 @@ import "testing"
 // Phase 1.4：路由决策矩阵——平台/集成/ops/core 四类目标 + 非 API 404。
 func TestPick(t *testing.T) {
 	g := &gateway{identity: &upstream{name: "identity"}, core: &upstream{name: "core"},
-		integration: &upstream{name: "integration"}, ops: &upstream{name: "ops"}}
+		integration: &upstream{name: "integration"}, ops: &upstream{name: "ops"}, master: &upstream{name: "master"}}
 	cases := []struct {
 		path string
 		want string
@@ -25,7 +25,11 @@ func TestPick(t *testing.T) {
 		{"/api/v1/advisor/insights", "integration"},
 		{"/api/v1/ops/services", "ops"},
 		{"/api/v1/ops/services/core/stop", "ops"},
-		{"/api/v1/materials", "core"},
+		{"/api/v1/materials", "master"},
+		{"/api/v1/materials/2/where-used", "master"},
+		{"/api/v1/boms/1/tree", "master"},
+		{"/api/v1/work-centers", "master"},
+		{"/api/v1/customers/7", "master"},
 		{"/api/v1/work-orders/5", "core"},
 		{"/api/v1/stock-orders/1/post-lines", "core"},
 		{"/api/v1/mrp/run", "core"},

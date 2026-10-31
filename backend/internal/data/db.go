@@ -63,6 +63,8 @@ func Migrate(db *gorm.DB) error {
 		&model.Attachment{},
 		// ops（Phase 1.5 ops-admin）
 		&model.OpsAuditLog{}, &model.OpsAlert{},
+		// 事件一致性底座（Phase 2.2）
+		&model.OutboxMessage{}, &model.ConsumedMessage{},
 	)
 }
 

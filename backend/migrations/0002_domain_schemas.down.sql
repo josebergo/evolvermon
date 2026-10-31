@@ -47,3 +47,5 @@ ALTER TABLE IF EXISTS integration.webhook_deliveries SET SCHEMA public;
 ALTER TABLE IF EXISTS integration.webhook_endpoints SET SCHEMA public;
 ALTER TABLE IF EXISTS ops.ops_audit_logs SET SCHEMA public;
 ALTER TABLE IF EXISTS ops.ops_alerts SET SCHEMA public;
+ALTER TABLE IF EXISTS platform.outbox_messages SET SCHEMA public;
+ALTER TABLE IF EXISTS platform.consumed_messages SET SCHEMA public;

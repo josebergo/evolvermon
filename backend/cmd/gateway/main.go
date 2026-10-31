@@ -28,13 +28,16 @@ var identityPrefixes = []string{
 
 var integrationPrefixes = []string{"webhooks", "webhook-deliveries", "devices", "advisor"}
 
+// masterPrefixes 主数据域（Phase 2）：materials 等路由至 master-data 服务。
+var masterPrefixes = []string{"materials", "boms", "routings", "work-centers", "customers", "suppliers"}
+
 type upstream struct {
 	name  string
 	proxy *httputil.ReverseProxy
 }
 
 type gateway struct {
-	identity, core, integration, ops *upstream
+	identity, core, integration, ops, master *upstream
 }
 
 func main() {
@@ -60,6 +63,7 @@ func main() {
 		core:        mk("core", getenvDefault("EM_CORE_URL", "http://127.0.0.1:8082")),
 		integration: mk("integration", getenvDefault("EM_INTEGRATION_URL", "http://127.0.0.1:8083")),
 		ops:         mk("ops-admin", getenvDefault("EM_OPS_URL", "http://127.0.0.1:8180")),
+		master:      mk("master-data", getenvDefault("EM_MASTER_URL", "http://127.0.0.1:8085")),
 	}
 
 	mux := http.NewServeMux()
@@ -101,6 +105,8 @@ func (g *gateway) pick(path string) *upstream {
 		return g.ops
 	case matchPrefix(rest, integrationPrefixes):
 		return g.integration
+	case matchPrefix(rest, masterPrefixes):
+		return g.master
 	case matchPrefix(rest, identityPrefixes):
 		return g.identity
 	default:

@@ -48,6 +48,8 @@ services:
       EM_MIGRATE: "0"
       EM_ROLES: core
       EM_SERVICE: core
+      EM_MASTER_URL: "http://master-data:8085"
+      EM_INTERNAL_TOKEN: "change-me-internal-token"
     depends_on:
       identity:
         condition: service_healthy
@@ -56,6 +58,19 @@ services:
       interval: 10s
       timeout: 3s
       retries: 12
+    restart: unless-stopped
+
+  master-data: # 主数据域（Phase 2）：CRUD + /internal/master/* 批量读
+    build: ./backend
+    command: ["./master-data"]
+    environment:
+      <<: *svc_env
+      EM_HTTP_ADDR: ":8085"
+      EM_MIGRATE: "0"
+      EM_INTERNAL_TOKEN: "change-me-internal-token"
+    depends_on:
+      identity:
+        condition: service_healthy
     restart: unless-stopped
 
   integration:
@@ -108,6 +123,7 @@ services:
       EM_CORE_URL: "http://core:8082"
       EM_INTEGRATION_URL: "http://integration:8083"
       EM_OPS_URL: "http://ops-admin:8090"
+      EM_MASTER_URL: "http://master-data:8085"
     ports:
       - "80:8080" # 唯一对外入口
     depends_on:

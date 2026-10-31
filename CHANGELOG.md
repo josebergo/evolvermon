@@ -2,6 +2,13 @@
 
 里程碑（M1–M6）与功能清单。每个 M 均以 `scripts/verify-golden-path.sh` 端到端验证通过为发布门槛。
 
+## v0.10.0（Phase 2 第一批 · 主数据服务化 + 事件一致性底座）
+- **cmd/master-data**（:8085）：主数据域独立进程（物料/BOM/工艺/工作中心/客商）+ `/internal/master/*` 批量读 API（X-Internal-Token 服务间认证）；网关 materials/boms/routings/work-centers/customers/suppliers 分流
+- **internal/client 读通道**：MasterData 接口双实现——Local（Lite 直连共享库，行为不变）/ Remote（HTTP + infra.Cache 缓存 TTL 60s）；**MRP BOM 展开试点改走读通道**（执行方案 2.4）
+- **事件一致性底座**（internal/outbox）：通用投递箱（platform.outbox_messages，与业务同库写入）+ relay（至少一次，推 Broker Key=tenant-{id} 保序）+ 消费幂等表（consumer+message_id 唯一）；relay 由 integration 进程（Micro）/聚合进程（Lite）运行；领域事件发布双写落箱
+- 验证：金路径 64/64 双形态 + 管理平台 17/17（7 服务）+ verify-consistency 9/9（落箱→投递→幂等→内部 API→MRP 读通道）+ 200 并发经网关 P99=31ms
+- 待续（Phase 2 第二批）：T1/T2 物理分库（identity/master/integration/ops 独立 database）、审计事件化、单号规则 API 化、缓存事件失效（随远端 Broker）
+
 ## v0.9.0（Phase 1 · 微服务形态落地：服务拆分 + 统一管理平台）
 按 [微服务方案](docs/03-design/microservices-architecture.md) 完成边缘域拆分与统一运维面，**Lite 单进程形态保持默认且行为不变**：
 - 服务拆分（6 部署单元）：`cmd/identity`（认证/租户/RBAC/审计）· `cmd/integration`（webhook/遥测/建议+投递 worker）· `cmd/scheduler`（定时 MRP，分布式锁互斥）· `cmd/server EM_ROLES=core`（核心交易域）· `cmd/gateway`（自研轻量反代，路径分流）· `cmd/ops-admin`（管理平台）

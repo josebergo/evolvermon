@@ -10,6 +10,15 @@ services:
     driver: process
     start: ./identity.exe
     dir: .
+  - name: master-data
+    url: http://127.0.0.1:8085
+    driver: process
+    start: ./master-data.exe
+    dir: .
+    env:
+      EM_HTTP_ADDR: ":8085"
+      EM_MIGRATE: "0"
+      EM_INTERNAL_TOKEN: "dev-internal-token"
   - name: core
     url: http://127.0.0.1:8082
     driver: process
@@ -19,6 +28,8 @@ services:
       EM_ROLES: core
       EM_HTTP_ADDR: ":8082"
       EM_MIGRATE: "0"
+      EM_MASTER_URL: "http://127.0.0.1:8085"
+      EM_INTERNAL_TOKEN: "dev-internal-token"
   - name: integration
     url: http://127.0.0.1:8083
     driver: process

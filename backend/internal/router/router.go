@@ -168,6 +168,9 @@ func New(db *gorm.DB, jm *jwtx.Manager, domains ...string) *gin.Engine {
 	if wants("platform") {
 		registerPlatform(r, v1, db, jm)
 	}
+	if wants("master") {
+		registerMaster(v1, db)
+	}
 	if wants("core") {
 		registerCore(v1, db)
 	}
@@ -271,55 +274,14 @@ func registerPlatform(r *gin.Engine, v1 *gin.RouterGroup, db *gorm.DB, jm *jwtx.
 	act(v1, "", "GET", "/attachments/:id/download", attach.Download)
 }
 
-// registerCore 核心交易域：主数据/销售/采购/MRP/计划/工单/质检/库存/调拨/看板/追溯/打印。
+// registerCore 核心交易域：销售/采购/MRP/计划/工单/质检/库存/调拨/看板/追溯/打印（主数据见 registerMaster）。
 func registerCore(v1 *gin.RouterGroup, db *gorm.DB) {
+	mst := &masterapi.MasterAPI{DB: db} // trace 工单追溯用（Phase 3 API 化）
 	erp := &erpapi.ErpAPI{DB: db}
 	mes := &mesapi.MesAPI{DB: db}
 	wms := &wmsapi.WmsAPI{DB: db}
 	mrp := &erpapi.MrpAPI{DB: db}
-	mst := &masterapi.MasterAPI{DB: db}
 	board := &mesapi.BoardAPI{DB: db}
-	// ---- 主数据 ----
-	crudRes[model.Material](v1, db, "erp:material", "/materials", crud.Options[model.Material]{
-		FactoryScoped: false, SearchCols: []string{"code", "name", "spec"}, FilterCols: []string{"category", "source_type"},
-		// FR-ERP-004：存在未完结单据禁止停用
-		BeforeUpdate: func(db *gorm.DB, ac *middleware.AuthCtx, obj *model.Material, old *model.Material) error {
-			if obj.Status == 0 && old.Status == 1 {
-				var so, po, wo int64
-				db.Raw(`SELECT COUNT(*) FROM erp.sales_order_lines l JOIN erp.sales_orders o ON o.id=l.sales_order_id
-					WHERE l.material_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, old.ID).Scan(&so)
-				db.Raw(`SELECT COUNT(*) FROM erp.purchase_order_lines l JOIN erp.purchase_orders o ON o.id=l.purchase_order_id
-					WHERE l.material_id=? AND o.status IN ('draft','arriving','receiving') AND o.deleted_at IS NULL`, old.ID).Scan(&po)
-				db.Model(&model.WorkOrder{}).Where("tenant_id=? AND material_id=? AND status IN ('draft','released','running','paused')", ac.TenantID, old.ID).Count(&wo)
-				if so+po+wo > 0 {
-					return response.NewBiz(response.ErrBiz, fmt.Sprintf("物料存在未完结单据（销售 %d / 采购 %d / 工单 %d），禁止停用", so, po, wo))
-				}
-			}
-			return nil
-		},
-	})
-	act(v1, "erp:material", "GET", "/materials/:id/where-used", mst.WhereUsed)
-	crudRes[model.Bom](v1, db, "erp:bom", "/boms", crud.Options[model.Bom]{
-		FactoryScoped: false, SearchCols: []string{"version_no"}, FilterCols: []string{"material_id", "status"},
-		Preload:       []string{"Lines"},
-	})
-	act(v1, "erp:bom", "POST", "/boms-validate", mst.BomValidate)
-	act(v1, "erp:bom", "POST", "/boms/:id/enable", mst.BomEnable)
-	act(v1, "erp:bom", "GET", "/boms/:id/tree", mst.BomTree)
-	crudRes[model.Routing](v1, db, "erp:routing", "/routings", crud.Options[model.Routing]{
-		FactoryScoped: false, SearchCols: []string{"version_no"}, FilterCols: []string{"material_id", "status"},
-		Preload:       []string{"Ops"},
-	})
-	crudRes[model.WorkCenter](v1, db, "erp:workcenter", "/work-centers", crud.Options[model.WorkCenter]{
-		FactoryScoped: true, SearchCols: []string{"code", "name"}, FilterCols: []string{"type"},
-	})
-	crudRes[model.Customer](v1, db, "erp:customer", "/customers", crud.Options[model.Customer]{
-		FactoryScoped: false, SearchCols: []string{"code", "name"},
-	})
-	crudRes[model.Supplier](v1, db, "erp:supplier", "/suppliers", crud.Options[model.Supplier]{
-		FactoryScoped: false, SearchCols: []string{"code", "name"},
-	})
-
 	// ---- ERP 交易 ----
 	crudRes[model.SalesOrder](v1, db, "erp:sales", "/sales-orders", crud.Options[model.SalesOrder]{
 		FactoryScoped: true, SearchCols: []string{"doc_no"}, FilterCols: []string{"status", "customer_id"},
@@ -444,4 +406,50 @@ func registerIntegration(v1 *gin.RouterGroup, db *gorm.DB) {
 	act(v1, "mes:report", "POST", "/devices/:code/telemetry", ext.PushTelemetry)
 	act(v1, "mes:report", "GET", "/devices/telemetry/latest", ext.LatestTelemetry)
 	act(v1, "mes:workorder", "GET", "/advisor/insights", ext.Insights)
+}
+
+// registerMaster 主数据域（Phase 2 服务化为 cmd/master-data）：物料/BOM/工艺/工作中心/客商。
+func registerMaster(v1 *gin.RouterGroup, db *gorm.DB) {
+	mst := &masterapi.MasterAPI{DB: db}
+	// ---- 主数据 ----
+	crudRes[model.Material](v1, db, "erp:material", "/materials", crud.Options[model.Material]{
+		FactoryScoped: false, SearchCols: []string{"code", "name", "spec"}, FilterCols: []string{"category", "source_type"},
+		// FR-ERP-004：存在未完结单据禁止停用
+		BeforeUpdate: func(db *gorm.DB, ac *middleware.AuthCtx, obj *model.Material, old *model.Material) error {
+			if obj.Status == 0 && old.Status == 1 {
+				var so, po, wo int64
+				db.Raw(`SELECT COUNT(*) FROM erp.sales_order_lines l JOIN erp.sales_orders o ON o.id=l.sales_order_id
+					WHERE l.material_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, old.ID).Scan(&so)
+				db.Raw(`SELECT COUNT(*) FROM erp.purchase_order_lines l JOIN erp.purchase_orders o ON o.id=l.purchase_order_id
+					WHERE l.material_id=? AND o.status IN ('draft','arriving','receiving') AND o.deleted_at IS NULL`, old.ID).Scan(&po)
+				db.Model(&model.WorkOrder{}).Where("tenant_id=? AND material_id=? AND status IN ('draft','released','running','paused')", ac.TenantID, old.ID).Count(&wo)
+				if so+po+wo > 0 {
+					return response.NewBiz(response.ErrBiz, fmt.Sprintf("物料存在未完结单据（销售 %d / 采购 %d / 工单 %d），禁止停用", so, po, wo))
+				}
+			}
+			return nil
+		},
+	})
+	act(v1, "erp:material", "GET", "/materials/:id/where-used", mst.WhereUsed)
+		crudRes[model.Bom](v1, db, "erp:bom", "/boms", crud.Options[model.Bom]{
+		FactoryScoped: false, SearchCols: []string{"version_no"}, FilterCols: []string{"material_id", "status"},
+		Preload:       []string{"Lines"},
+	})
+	act(v1, "erp:bom", "POST", "/boms-validate", mst.BomValidate)
+	act(v1, "erp:bom", "POST", "/boms/:id/enable", mst.BomEnable)
+	act(v1, "erp:bom", "GET", "/boms/:id/tree", mst.BomTree)
+	crudRes[model.Routing](v1, db, "erp:routing", "/routings", crud.Options[model.Routing]{
+		FactoryScoped: false, SearchCols: []string{"version_no"}, FilterCols: []string{"material_id", "status"},
+		Preload:       []string{"Ops"},
+	})
+	crudRes[model.WorkCenter](v1, db, "erp:workcenter", "/work-centers", crud.Options[model.WorkCenter]{
+		FactoryScoped: true, SearchCols: []string{"code", "name"}, FilterCols: []string{"type"},
+	})
+	crudRes[model.Customer](v1, db, "erp:customer", "/customers", crud.Options[model.Customer]{
+		FactoryScoped: false, SearchCols: []string{"code", "name"},
+	})
+	crudRes[model.Supplier](v1, db, "erp:supplier", "/suppliers", crud.Options[model.Supplier]{
+		FactoryScoped: false, SearchCols: []string{"code", "name"},
+	})
+
 }

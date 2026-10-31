@@ -10,11 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
 	"github.com/evolvermon/evolvermon/internal/infra"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
+	"github.com/evolvermon/evolvermon/internal/outbox"
 	"github.com/evolvermon/evolvermon/internal/pkg/logx"
 	"github.com/evolvermon/evolvermon/internal/router"
 	"github.com/evolvermon/evolvermon/internal/scheduler"
@@ -77,10 +79,12 @@ func main() {
 	}
 	log.Printf("infra ready: broker=%s cache=%s(locker=%s)", in.Broker.Name(), in.Cache.Name(), in.Locker.Name())
 	events.UseBroker(in.Broker)
+	client.UseCache(in.Cache) // Phase 2.3：跨服务读通道缓存端口
 
 	// Micro 分工：webhook 投递 worker 只在聚合/集成进程跑；定时 MRP 在聚合/scheduler 进程跑
 	if roles == "all" || roles == "integration" {
 		events.StartWorker(db)
+		outbox.StartRelay(db, in.Broker) // Phase 2.2：Micro 由 integration 进程投递
 	}
 	r := router.New(db, jm, routerDomains(roles)...)
 
