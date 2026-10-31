@@ -202,3 +202,28 @@ func (c *IdentityClient) BoolParam(tenantID int64, key string) bool {
 	boolParamCache.Unlock()
 	return val
 }
+
+// MaterialCheck core 单据开放数（master 物料停用校验用）。
+func MaterialCheck(coreURL, token string, tenantID, materialID int64) (int64, error) {
+	hc := &http.Client{Timeout: 5 * time.Second}
+	req, _ := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("%s/internal/core/material-check?tenantId=%d&materialId=%d", coreURL, tenantID, materialID), nil)
+	req.Header.Set("X-Internal-Token", token)
+	resp, err := hc.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("core material-check: http %d", resp.StatusCode)
+	}
+	var out struct {
+		Data struct {
+			OpenDocs int64 `json:"openDocs"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, err
+	}
+	return out.Data.OpenDocs, nil
+}

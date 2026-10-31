@@ -4,6 +4,7 @@ package api
 // 模板内联避免外部资源依赖（NFR-023 离线工厂可用）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"html"
@@ -101,11 +102,9 @@ func (p *PrintAPI) StockOrder(c *gin.Context) {
 		c.String(404, "单据不存在")
 		return
 	}
-	var wh model.Warehouse
-	p.DB.Scopes(data.ScopeFor(ac, true)).First(&wh, o.WarehouseID)
-	var mats []model.Material
-	p.DB.Scopes(data.ScopeFor(ac, false)).Find(&mats)
-	matName := map[int64]model.Material{}
+	wh, _ := client.WhRef(c.Request.Context(), o.WarehouseID)
+	mats, _ := client.M().Materials(c.Request.Context(), ac.TenantID, nil)
+	matName := map[int64]client.MaterialLite{}
 	for _, m := range mats {
 		matName[m.ID] = m
 	}
@@ -134,10 +133,8 @@ func (p *PrintAPI) WorkOrder(c *gin.Context) {
 		c.String(404, "工单不存在")
 		return
 	}
-	var mat model.Material
-	p.DB.Scopes(data.ScopeFor(ac, false)).First(&mat, wo.MaterialID)
-	var wcs []model.WorkCenter
-	p.DB.Scopes(data.ScopeFor(ac, true)).Find(&wcs)
+	mat, _ := client.MatRef(c.Request.Context(), ac.TenantID, wo.MaterialID)
+	wcs, _ := client.M().WorkCenters(c.Request.Context(), ac.TenantID)
 	wcName := map[int64]string{}
 	for _, w := range wcs {
 		wcName[w.ID] = w.Name

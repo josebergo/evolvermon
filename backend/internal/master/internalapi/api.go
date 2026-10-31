@@ -22,7 +22,7 @@ type BomEdge struct {
 }
 
 // MaterialCols 物料精简视图列（Local/Remote/内部 API 三方共用）。
-const MaterialCols = "id, tenant_id, code, name, category, spec, unit, source_type, price, safety_stock, serial_managed, status"
+const MaterialCols = "id, tenant_id, code, name, category, spec, unit, source_type, price, safety_stock, serial_managed, batch_managed, lead_time_days, status"
 
 // MaterialLite 物料精简视图（跨域读通道 DTO；覆盖 core 引用读所需字段）。
 type MaterialLite struct {
@@ -37,6 +37,8 @@ type MaterialLite struct {
 	Price         float64 `json:"price"`
 	SafetyStock   float64 `json:"safetyStock"`
 	SerialManaged bool    `json:"serialManaged"`
+	BatchManaged  bool    `json:"batchManaged"`
+	LeadTimeDays  int     `json:"leadTimeDays"`
 	Status        int     `json:"status"`
 }
 
@@ -75,12 +77,14 @@ type WhLite struct {
 
 // RoutingOpLite 工序精简视图。
 type RoutingOpLite struct {
-	ID           int64   `json:"id"`
-	RoutingID    int64   `json:"routingId"`
-	Seq          int     `json:"seq"`
-	Name         string  `json:"name"`
-	WorkCenterID int64   `json:"workCenterId"`
-	StdHours     float64 `json:"stdHours"`
+	ID              int64   `json:"id"`
+	RoutingID       int64   `json:"routingId"`
+	Seq             int     `json:"seq"`
+	Name            string  `json:"name"`
+	WorkCenterID    int64   `json:"workCenterId"`
+	StdHours        float64 `json:"stdHours"`
+	PrepTimeSec     int     `json:"prepTimeSec"`
+	RunTimePerUnitSec float64 `json:"runTimePerUnitSec"`
 }
 
 // RoutingDTO 工艺路线（含工序）——工单创建快照用。
@@ -90,7 +94,7 @@ type RoutingDTO struct {
 	MaterialID int64            `json:"materialId"`
 	VersionNo  string           `json:"versionNo"`
 	Status     string           `json:"status"`
-	Ops        []RoutingOpLite  `json:"ops"`
+	Ops        []RoutingOpLite  `json:"ops" gorm:"-"`
 }
 
 type API struct{ DB *gorm.DB }
@@ -173,7 +177,7 @@ type BomDTO struct {
 	MaterialID int64         `json:"materialId"`
 	VersionNo  string        `json:"versionNo"`
 	Status     string        `json:"status"`
-	Lines      []BomLineLite `json:"lines"`
+	Lines      []BomLineLite `json:"lines" gorm:"-"`
 }
 
 // BomOf 按 id 或 materialId（启用版本）取 BOM。
@@ -203,7 +207,7 @@ func (a *API) RoutingOf(c *gin.Context) {
 		FROM master.routings r WHERE r.tenant_id=? AND r.material_id=? AND r.status='active' AND r.deleted_at IS NULL
 		ORDER BY r.id DESC LIMIT 1`, tenantID, matID).Scan(&r)
 	if r.ID > 0 {
-		a.DB.Raw(`SELECT o.id, o.routing_id, o.seq, o.name, o.work_center_id, o.std_hours
+		a.DB.Raw(`SELECT o.id, o.routing_id, o.seq, o.name, o.work_center_id, o.prep_time_sec, o.run_time_per_unit_sec
 			FROM master.routing_ops o WHERE o.routing_id=? ORDER BY o.seq`, r.ID).Scan(&r.Ops)
 	}
 	response.OK2(c, gin.H{"value": r})

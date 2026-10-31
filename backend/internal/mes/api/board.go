@@ -3,6 +3,7 @@ package api
 // 工作台与看板（FR-MES-050~051、dashboard §7 API）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/client"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -102,22 +103,33 @@ func (b *BoardAPI) DashboardSummary(c *gin.Context) {
 	b.DB.Model(&model.StockOrder{}).Scopes(sc).Where("status IN ('draft','doing') AND doc_type='rcv'").Count(&counts.RcvTodo)
 	b.DB.Model(&model.StockOrder{}).Scopes(sc).Where("status IN ('draft','doing') AND doc_type='shp'").Count(&counts.ShpTodo)
 	b.DB.Model(&model.QcRecord{}).Scopes(sc).Where("result='pending'").Count(&counts.QcPending)
-	b.DB.Model(&model.Material{}).Scopes(data.ScopeFor(ac, false)).Count(&counts.MaterialCount)
+	counts.MaterialCount, _ = client.M().CountMaterials(c.Request.Context(), ac.TenantID)
 
-	// 安全库存预警
-	var alerts []struct {
-		ID    int64   `json:"id"`
-		Code  string  `json:"code"`
-		Name  string  `json:"name"`
+	// 安全库存预警（master 分库拆解：物料走通道，库存 core 直查，Go 合并）
+	type stockAlert struct {
+		ID     int64   `json:"id"`
+		Code   string  `json:"code"`
+		Name   string  `json:"name"`
 		OnHand float64 `json:"onHand"`
 		Safety float64 `json:"safety"`
 	}
-	b.DB.Raw(`SELECT mt.id, mt.code, mt.name, COALESCE(s.q,0) AS on_hand, mt.safety_stock AS safety
-		FROM master.materials mt
-		LEFT JOIN (SELECT material_id, SUM(qty_on_hand) AS q FROM wms.stocks WHERE factory_id=? GROUP BY material_id) s
-		  ON s.material_id = mt.id
-		WHERE mt.tenant_id=? AND mt.status=1 AND mt.safety_stock > 0 AND COALESCE(s.q,0) < mt.safety_stock
-		LIMIT 20`, ac.FactoryID, ac.TenantID).Scan(&alerts)
+	var alerts []stockAlert
+	if matMap, merr := client.M().MaterialMap(c.Request.Context(), ac.TenantID); merr == nil {
+		var stockRows []struct {
+			MaterialID int64
+			Q          float64
+		}
+		b.DB.Raw(`SELECT material_id, SUM(qty_on_hand) AS q FROM wms.stocks WHERE factory_id=? GROUP BY material_id`, ac.FactoryID).Scan(&stockRows)
+		onHand := map[int64]float64{}
+		for _, r := range stockRows {
+			onHand[r.MaterialID] = r.Q
+		}
+		for id, mt := range matMap {
+			if mt.Status == 1 && mt.SafetyStock > 0 && onHand[id] < mt.SafetyStock {
+				alerts = append(alerts, stockAlert{ID: id, Code: mt.Code, Name: mt.Name, OnHand: onHand[id], Safety: mt.SafetyStock})
+			}
+		}
+	}
 
 	// 近 7 日报工趋势
 	var trend []struct {

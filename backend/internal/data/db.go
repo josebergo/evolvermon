@@ -2,6 +2,7 @@
 package data
 
 import (
+	"context"
 	"gorm.io/gorm/schema"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/middleware"
 	"github.com/evolvermon/evolvermon/internal/model"
 )
@@ -168,19 +170,44 @@ func RunScheduledMrp(db *gorm.DB, tenantID, factoryID int64) error {
 	type row struct {
 		Cnt int64
 	}
-	var r row
-	if err := db.Raw(`
-		SELECT COUNT(*) cnt FROM (
-		  SELECT mt.id FROM master.materials mt
-		  WHERE mt.tenant_id=? AND mt.status=1 AND mt.safety_stock > 0
-		  AND COALESCE((SELECT SUM(s.qty_on_hand) FROM wms.stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0)
-		      + COALESCE((SELECT SUM(po.qty-pol.received_qty) FROM erp.purchase_order_lines pol
-		                 JOIN erp.purchase_orders po ON po.id=pol.purchase_order_id
-		                 WHERE pol.material_id=mt.id AND po.factory_id=? AND po.status IN ('arriving','receiving')),0)
-		      < mt.safety_stock
-		) t`, tenantID, factoryID, factoryID).Scan(&r).Error; err != nil {
-		return err
+	// master 分库拆解：安全库存走通道；库存/在途 core 直查（Go 合并）
+	type mrow struct {
+		MaterialID int64
+		Q          float64
 	}
+	matMap, merr := client.M().MaterialMap(context.Background(), tenantID)
+	if merr != nil {
+		return merr
+	}
+	matIDs := make([]int64, 0, len(matMap))
+	for id, mt := range matMap {
+		if mt.Status == 1 && mt.SafetyStock > 0 {
+			matIDs = append(matIDs, id)
+		}
+	}
+	cnt := 0
+	if len(matIDs) > 0 {
+		var stocks []mrow
+		db.Raw(`SELECT material_id, SUM(qty_on_hand) q FROM wms.stocks WHERE factory_id=? GROUP BY material_id`, factoryID).Scan(&stocks)
+		onHand := map[int64]float64{}
+		for _, r := range stocks {
+			onHand[r.MaterialID] = r.Q
+		}
+		var transit []mrow
+		db.Raw(`SELECT l.material_id, COALESCE(SUM(l.qty-l.received_qty),0) q FROM erp.purchase_order_lines l
+			JOIN erp.purchase_orders po ON po.id=l.purchase_order_id
+			WHERE po.factory_id=? AND po.status IN ('arriving','receiving') AND l.material_id IN ? GROUP BY l.material_id`, factoryID, matIDs).Scan(&transit)
+		inT := map[int64]float64{}
+		for _, r := range transit {
+			inT[r.MaterialID] = r.Q
+		}
+		for _, id := range matIDs {
+			if onHand[id]+inT[id] < matMap[id].SafetyStock {
+				cnt++
+			}
+		}
+	}
+	r := row{Cnt: int64(cnt)}
 	summary := fmt.Sprintf(`{"shortageMaterials":%d,"ranAt":%q}`, r.Cnt, time.Now().Format(time.RFC3339))
 	db.Exec(`INSERT INTO platform.sys_params(tenant_id, factory_id, key, value, updated_at)
 		VALUES(?,?, 'mrp_last_run', ?, now())

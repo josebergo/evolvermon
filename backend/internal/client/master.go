@@ -95,7 +95,7 @@ func (l *localMaster) RoutingOf(_ context.Context, tenantID, materialID int64) (
 	if err != nil || r.ID == 0 {
 		return nil, err
 	}
-	l.db.Raw(`SELECT o.id, o.routing_id, o.seq, o.name, o.work_center_id, o.std_hours
+	l.db.Raw(`SELECT o.id, o.routing_id, o.seq, o.name, o.work_center_id, o.prep_time_sec, o.run_time_per_unit_sec
 		FROM master.routing_ops o WHERE o.routing_id=? ORDER BY o.seq`, r.ID).Scan(&r.Ops)
 	return &r, nil
 }
@@ -280,15 +280,17 @@ func (r *remoteMaster) WorkCenters(ctx context.Context, tenantID int64) ([]mapi.
 
 func (r *remoteMaster) RoutingOf(ctx context.Context, tenantID, materialID int64) (*mapi.RoutingDTO, error) {
 	var out struct {
-	Data mapi.RoutingDTO `json:"data"`
+	Data struct {
+			Value mapi.RoutingDTO `json:"value"`
+		} `json:"data"`
 	}
 	if err := r.get(ctx, fmt.Sprintf("/internal/master/routing?tenantId=%d&materialId=%d", tenantID, materialID), &out); err != nil {
 		return nil, err
 	}
-	if out.Data.ID == 0 {
+	if out.Data.Value.ID == 0 {
 		return nil, nil
 	}
-	return &out.Data, nil
+	return &out.Data.Value, nil
 }
 
 func (r *remoteMaster) BomOf(ctx context.Context, tenantID, bomID, materialID int64) (*mapi.BomDTO, error) {

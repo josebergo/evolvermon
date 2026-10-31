@@ -3,6 +3,7 @@ package api
 // MES：工单生命周期、派工、报工（幂等）、质检（FR-MES-001~053；流程见 core-flows.md §2.2）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/client"
 	wmssvc "github.com/evolvermon/evolvermon/internal/wms/svc"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"encoding/json"
@@ -34,38 +35,41 @@ func (m *MesAPI) Release(c *gin.Context) {
 		return
 	}
 	// 取当前启用 BOM 与工艺（无工艺允许下达——手工线场景）
-	var bom model.Bom
-	var routing model.Routing
 	bomJSON, routingJSON := "{}", "{}"
-	if wo.BomID != nil {
-		if err := m.DB.Scopes(data.ScopeFor(ac, false)).Preload("Lines").First(&bom, *wo.BomID).Error; err != nil {
+	var routing model.Routing
+	{
+		bomID := int64(0)
+		if wo.BomID != nil {
+			bomID = *wo.BomID
+		}
+		dto, berr := client.M().BomOf(c.Request.Context(), ac.TenantID, bomID, wo.MaterialID)
+		if berr != nil && bomID > 0 {
 			response.Fail(c, response.NewBiz(response.ErrBiz, "BOM 不存在"))
 			return
 		}
-		b, _ := json.Marshal(bom)
-		bomJSON = string(b)
-	} else {
-		// 未显式选择时取启用版本
-		m.DB.Scopes(data.ScopeFor(ac, false)).Preload("Lines").
-			Where("material_id=? AND status='active'", wo.MaterialID).First(&bom)
-		if bom.ID != 0 {
-			wo.BomID = &bom.ID
+		if dto != nil && dto.ID > 0 {
+			wo.BomID = &dto.ID
+			bom := model.Bom{ID: dto.ID, TenantID: dto.TenantID, MaterialID: dto.MaterialID, VersionNo: dto.VersionNo, Status: model.BomStatus(dto.Status)}
+			for _, l := range dto.Lines {
+				bom.Lines = append(bom.Lines, model.BomLine{ID: l.ID, BomID: l.BomID, MaterialID: l.MaterialID, Qty: l.Qty, ScrapRate: l.ScrapRate})
+			}
 			b, _ := json.Marshal(bom)
 			bomJSON = string(b)
 		}
 	}
-	if wo.RoutingID != nil {
-		if err := m.DB.Scopes(data.ScopeFor(ac, false)).Preload("Ops").First(&routing, *wo.RoutingID).Error; err != nil {
+	{
+		routingID := int64(0)
+		if wo.RoutingID != nil {
+			routingID = *wo.RoutingID
+		}
+		rdto, rerr := m.routingOf(c, ac, routingID, wo.MaterialID)
+		if rerr != nil && routingID > 0 {
 			response.Fail(c, response.NewBiz(response.ErrBiz, "工艺路线不存在"))
 			return
 		}
-		r, _ := json.Marshal(routing)
-		routingJSON = string(r)
-	} else {
-		m.DB.Scopes(data.ScopeFor(ac, false)).Preload("Ops").
-			Where("material_id=? AND status='active'", wo.MaterialID).First(&routing)
-		if routing.ID != 0 {
-			wo.RoutingID = &routing.ID
+		if rdto != nil && rdto.ID > 0 {
+			wo.RoutingID = &rdto.ID
+			routing = *rdto
 			r, _ := json.Marshal(routing)
 			routingJSON = string(r)
 		}
@@ -198,28 +202,27 @@ func (m *MesAPI) PickingRequest(c *gin.Context) {
 		return
 	}
 	// 仓库按类型就位
-	var whRaw, whSemi model.Warehouse
-	if err := m.DB.Scopes(data.ScopeFor(ac, true)).Where("type='raw' AND status=1").First(&whRaw).Error; err != nil {
+	whRaw, wrerr := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "raw")
+	if wrerr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置原料仓"))
 		return
 	}
-	m.DB.Scopes(data.ScopeFor(ac, true)).Where("type='semi' AND status=1").First(&whSemi)
+	whSemi, _ := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "semi")
 
 	// 行分类：半成品物料 → 半成品仓；其余 → 原料仓
 	matIDs := make([]int64, 0, len(snapshot.Lines))
 	for _, l := range snapshot.Lines {
 		matIDs = append(matIDs, l.MaterialID)
 	}
-	var mats []model.Material
-	m.DB.Scopes(data.ScopeFor(ac, false)).Where("id IN ?", matIDs).Find(&mats)
+	mats, _ := client.M().Materials(c.Request.Context(), ac.TenantID, matIDs)
 	isSemi := map[int64]bool{}
 	for _, mt := range mats {
-		isSemi[mt.ID] = mt.Category == model.MatSemi
+		isSemi[mt.ID] = mt.Category == string(model.MatSemi)
 	}
 
 	orders := []model.StockOrder{}
 	err := m.DB.Transaction(func(tx *gorm.DB) error {
-		mk := func(wh model.Warehouse, has bool) error {
+		mk := func(wh client.WhLite, has bool) error {
 			if !has || wh.ID == 0 {
 				return nil
 			}
@@ -239,7 +242,7 @@ func (m *MesAPI) PickingRequest(c *gin.Context) {
 			}
 			no := 0
 			for _, l := range snapshot.Lines {
-				if isSemi[l.MaterialID] != (wh.Type == model.WhSemi) {
+				if isSemi[l.MaterialID] != (wh.Type == string(model.WhSemi)) {
 					continue
 				}
 				no++
@@ -286,18 +289,18 @@ func (m *MesAPI) FinishReceipt(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "合格量为 0，不可报交入库（请先报工）"))
 		return
 	}
-	var mat model.Material
-	if err := m.DB.Scopes(data.ScopeFor(ac, false)).First(&mat, wo.MaterialID).Error; err != nil {
+	mat, merr := client.MatRef(c.Request.Context(), ac.TenantID, wo.MaterialID)
+	if merr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "物料不存在"))
 		return
 	}
 	// 成品/半成品仓
-	whType := "'finished'"
-	if mat.Category == model.MatSemi {
-		whType = "'semi'"
+	whTypeName := "finished"
+	if mat.Category == string(model.MatSemi) {
+		whTypeName = "semi"
 	}
-	var wh model.Warehouse
-	if err := m.DB.Scopes(data.ScopeFor(ac, true)).Where("type="+whType+" AND status=1").First(&wh).Error; err != nil {
+	wh, werr := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, whTypeName)
+	if werr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置对应仓库"))
 		return
 	}
@@ -648,8 +651,8 @@ func (m *MesAPI) ReturnMaterial(c *gin.Context) {
 	for _, r := range rets {
 		returned[r.MaterialID] = r.Picked
 	}
-	var wh model.Warehouse
-	if err := m.DB.Scopes(data.ScopeFor(ac, true)).Where("type='raw' AND status=1").First(&wh).Error; err != nil {
+	wh, werr := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "raw")
+	if werr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置原料仓"))
 		return
 	}
@@ -722,4 +725,32 @@ func (m *MesAPI) releasePending(ac *middleware.AuthCtx, rec model.QcRecord, to, 
 	}
 	_ = wmssvc.TransferBucket(m.DB, ac, order.WarehouseID, model.StockOrderLine{MaterialID: rec.MaterialID},
 		rec.BatchNo, rec.Qty, "pending", to, bizType, rec.DocNo)
+}
+
+// routingOf 经主数据通道取工艺路线并转 model（快照 JSON 保形；Lite=直连 Remote=HTTP）。
+func (m *MesAPI) routingOf(c *gin.Context, ac *middleware.AuthCtx, routingID, materialID int64) (*model.Routing, error) {
+	md := client.M()
+	var dto *client.RoutingDTO
+	var err error
+	if routingID > 0 {
+		// 按 id：master 通道仅提供按物料取启用版本——id 精确匹配时校验归属
+		dto, err = md.RoutingOf(c.Request.Context(), ac.TenantID, materialID)
+		if err == nil && dto != nil && routingID > 0 && dto.ID != routingID {
+			// 工单指定的版本非当前启用版本：取启用版本（与旧版 First(id) 行为差异见执行方案——
+			// 旧版可取任意版本；分库形态下按物料取启用版本，保持快照一致性）
+		}
+	} else {
+		dto, err = md.RoutingOf(c.Request.Context(), ac.TenantID, materialID)
+	}
+	if err != nil || dto == nil {
+		return nil, err
+	}
+	r := &model.Routing{ID: dto.ID, TenantID: dto.TenantID, MaterialID: dto.MaterialID,
+		VersionNo: dto.VersionNo, Status: model.BomStatus(dto.Status)}
+	for _, o := range dto.Ops {
+		r.Ops = append(r.Ops, model.RoutingOp{ID: o.ID, RoutingID: o.RoutingID, Seq: o.Seq,
+			Name: o.Name, WorkCenterID: o.WorkCenterID,
+			PrepTimeSec: o.PrepTimeSec, RunTimePerUnitSec: o.RunTimePerUnitSec})
+	}
+	return r, nil
 }

@@ -3,13 +3,16 @@ package api
 // M6：Webhook 管理、设备遥测接入、智能建议（启发式 AI-lite）。
 
 import (
+	"encoding/json"
+	"net/http"
+	"fmt"
+	"os"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
 	"github.com/evolvermon/evolvermon/internal/model"
 	"github.com/evolvermon/evolvermon/internal/pkg/response"
@@ -116,62 +119,83 @@ func (e *ExtAPI) Insights(c *gin.Context) {
 	}
 	out := []insight{}
 
-	// 1) 缺料预警：低于安全库存且无在途在制覆盖
-	var shorts []struct {
-		Code   string  `json:"code"`
-		Name   string  `json:"name"`
-		OnHand float64 `json:"onHand"`
-		Safety float64 `json:"safety"`
-	}
-	e.DB.Raw(`SELECT mt.code, mt.name,
-		COALESCE((SELECT SUM(s.qty_on_hand) FROM wms.stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0) AS on_hand,
-		mt.safety_stock AS safety
-		FROM master.materials mt
-		WHERE mt.tenant_id=? AND mt.status=1 AND mt.safety_stock>0
-		  AND COALESCE((SELECT SUM(s.qty_on_hand) FROM wms.stocks s WHERE s.material_id=mt.id AND s.factory_id=?),0) < mt.safety_stock
-		LIMIT 10`, ac.FactoryID, ac.TenantID, ac.FactoryID).Scan(&shorts)
-	for _, s := range shorts {
-		out = append(out, insight{"shortage", "high",
-			"缺料预警：" + s.Name,
-			"现存量 " + conv.F64(s.OnHand) + " 已低于安全库存 " + conv.F64(s.Safety),
-			"运行 MRP 生成补货建议，或人工创建请购"})
+	// 1) 缺料预警（master 分库：经 core /internal/core/insights 取数）
+	if data, ierr := coreInsights(c, ac); ierr == nil {
+		for _, x := range data.Shortages {
+			out = append(out, insight{"shortage", "high",
+				"缺料预警：" + x.Name,
+				"现存量 " + conv.F64(x.OnHand) + " 已低于安全库存 " + conv.F64(x.Safety),
+				"运行 MRP 生成补货建议，或人工创建请购"})
+		}
 	}
 
-	// 2) 交期风险：距计划完工 <2 天且进度 <50%
-	var risks []model.WorkOrder
-	e.DB.Scopes(data.ScopeFor(ac, true)).
-		Where("status IN ('released','running') AND plan_end_at IS NOT NULL AND plan_end_at < now() + interval '2 days'").Find(&risks)
-	for _, w := range risks {
-		progress := 0.0
-		if w.Qty > 0 {
-			progress = w.GoodQty / w.Qty * 100
-		}
-		if progress < 50 {
+// 2) 交期风险（core 代理：integration 库无 mes 表）
+	if data, ierr := coreInsights(c, ac); ierr == nil {
+		for _, w := range data.DueRisks {
 			out = append(out, insight{"due-risk", "high",
 				"交期风险：" + w.DocNo,
-				"进度仅 " + conv.F64(progress) + "%，计划完工 " + conv.Ts(w.PlanEndAt),
+				"进度仅 " + conv.F64(w.Progress) + "%，计划完工 " + conv.Ts(w.PlanEndAt),
 				"提升优先级插单排产，或与客户协商改期"})
 		}
 	}
 
-	// 3) 产能洞察：负载最高的工作中心
-	var loads []struct {
-		Name  string  `json:"name"`
-		Ops   int64   `json:"ops"`
-		Cap   float64 `json:"cap"`
-	}
-	e.DB.Raw(`SELECT wc.name, COUNT(o.id) AS ops, wc.capacity_per_day AS cap
-		FROM master.work_centers wc
-		LEFT JOIN mes.wo_operations o ON o.work_center_id=wc.id AND o.status IN ('waiting','assigned','running')
-		WHERE wc.tenant_id=? AND wc.factory_id=? AND wc.status=1
-		GROUP BY wc.id, wc.name, wc.capacity_per_day ORDER BY ops DESC LIMIT 3`, ac.TenantID, ac.FactoryID).Scan(&loads)
-	for _, l := range loads {
-		if l.Ops >= 2 && l.Cap > 0 && float64(l.Ops) > l.Cap {
-			out = append(out, insight{"capacity", "medium",
-				"产能瓶颈：" + l.Name,
-				"待执行工序 " + conv.I64s(l.Ops) + " 道，超出日产能 " + conv.F64(l.Cap),
-				"安排加班、临时转移工序或调整排产优先级"})
+// 3) 产能洞察：负载最高的工作中心
+	// 3) 产能洞察（core 代理：integration 库无跨域表）
+	if data, ierr := coreInsights(c, ac); ierr == nil {
+		for _, l := range data.WcLoads {
+			if l.Ops >= 2 && l.Cap > 0 && float64(l.Ops) > l.Cap {
+				out = append(out, insight{"capacity", "medium",
+					"产能瓶颈：" + l.Name,
+					"待执行工序 " + conv.I64s(l.Ops) + " 道，超出日产能 " + conv.F64(l.Cap),
+					"安排加班、临时转移工序或调整排产优先级"})
+			}
 		}
 	}
+
 	response.OK2(c, gin.H{"insights": out, "generatedAt": time.Now().Format(time.RFC3339)})
+}
+
+// coreInsights 从 core 取智能建议数据源（EM_CORE_URL；Lite 由本进程内 core 逻辑等价执行）。
+func coreInsights(c *gin.Context, ac *middleware.AuthCtx) (*insightsData, error) {
+	base := os.Getenv("EM_CORE_URL")
+	if base == "" {
+		base = "http://127.0.0.1:8082"
+	}
+	req, _ := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("%s/internal/core/insights?tenantId=%d&factoryId=%d", base, ac.TenantID, ac.FactoryID), nil)
+	req.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("core insights: http %d", resp.StatusCode)
+	}
+	var out struct {
+		Data insightsData `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out.Data, nil
+}
+
+type insightsData struct {
+	Shortages []struct {
+		Code   string  `json:"code"`
+		Name   string  `json:"name"`
+		OnHand float64 `json:"onHand"`
+		Safety float64 `json:"safety"`
+	} `json:"shortages"`
+	DueRisks []struct {
+		DocNo     string     `json:"docNo"`
+		Progress  float64    `json:"progress"`
+		PlanEndAt *time.Time `json:"planEndAt"`
+	} `json:"dueRisks"`
+	WcLoads []struct {
+		Name string  `json:"name"`
+		Ops  int64   `json:"ops"`
+		Cap  float64 `json:"cap"`
+	} `json:"wcLoads"`
 }

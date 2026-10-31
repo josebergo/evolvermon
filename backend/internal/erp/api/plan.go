@@ -3,6 +3,7 @@ package api
 // M3 生产计划域：ATP 可承诺量、有限产能排产、甘特数据、派工看板（FR-ERP/PRD M3）。
 
 import (
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"math"
 	"sort"
@@ -68,8 +69,8 @@ func (p *PlanAPI) Atp(c *gin.Context) {
 	} else if inTransit.Date != nil && inTransit.Date.Before(earliest) == false {
 		earliest = *inTransit.Date
 	}
-	var mat model.Material
-	p.DB.Scopes(data.ScopeFor(ac, false)).First(&mat, matID)
+	mid, _ := strconv.ParseInt(matID, 10, 64)
+	mat, _ := client.MatRef(c.Request.Context(), ac.TenantID, mid)
 	feasible := qty == 0 || available >= qty
 	if !feasible && mat.ID != 0 {
 		earliest = time.Now().AddDate(0, 0, mat.LeadTimeDays)
@@ -98,8 +99,11 @@ func (p *PlanAPI) Schedule(c *gin.Context) {
 		}
 		return woDue(wos[i]).Before(woDue(wos[j]))
 	})
-	var wcs []model.WorkCenter
-	p.DB.Scopes(data.ScopeFor(ac, true)).Where("status=1").Find(&wcs)
+	wcs, werr := client.M().WorkCenters(c.Request.Context(), ac.TenantID)
+	if werr != nil {
+		response.Fail(c, werr)
+		return
+	}
 	capPerDay := map[int64]float64{}
 	for _, w := range wcs {
 		capPerDay[w.ID] = w.CapacityPerDay
@@ -243,16 +247,52 @@ func (p *PlanAPI) DispatchBoard(c *gin.Context) {
 		Running      int64   `json:"running"`
 		DoneToday    float64 `json:"doneToday"`
 	}
+	// master 分库拆解：工作中心走通道；工序 core 直查（Go 合并）
+	wcs, werr := client.M().WorkCenters(c.Request.Context(), ac.TenantID)
+	if werr != nil {
+		response.Fail(c, werr)
+		return
+	}
+	var opRows []struct {
+		WorkCenterID int64
+		Status       string
+		QtyOk        float64
+	}
+	p.DB.Raw(`SELECT work_center_id, status, COALESCE(qty_ok,0) qty_ok FROM mes.wo_operations WHERE tenant_id=? AND factory_id=?`,
+		ac.TenantID, ac.FactoryID).Scan(&opRows)
+	type agg struct {
+		waiting, assigned, running int64
+		doneToday                  float64
+	}
+	bywc := map[int64]*agg{}
+	for _, o := range opRows {
+		a := bywc[o.WorkCenterID]
+		if a == nil {
+			a = &agg{}
+			bywc[o.WorkCenterID] = a
+		}
+		switch o.Status {
+		case "waiting":
+			a.waiting++
+		case "assigned":
+			a.assigned++
+		case "running":
+			a.running++
+		}
+		a.doneToday += o.QtyOk
+	}
 	var rows []row
-	p.DB.Raw(`SELECT wc.id work_center_id, wc.name work_center,
-		SUM(CASE WHEN o.status='waiting' THEN 1 ELSE 0 END) waiting,
-		SUM(CASE WHEN o.status='assigned' THEN 1 ELSE 0 END) assigned,
-		SUM(CASE WHEN o.status='running' THEN 1 ELSE 0 END) running,
-		COALESCE(SUM(o.qty_ok),0) done_today
-		FROM master.work_centers wc
-		LEFT JOIN mes.wo_operations o ON o.work_center_id=wc.id
-		WHERE wc.tenant_id=? AND wc.factory_id=? AND wc.status=1
-		GROUP BY wc.id, wc.name ORDER BY wc.id`, ac.TenantID, ac.FactoryID).Scan(&rows)
+	for _, wc := range wcs {
+		if wc.FactoryID == nil || *wc.FactoryID != ac.FactoryID || wc.Status != 1 {
+			continue
+		}
+		a := bywc[wc.ID]
+		if a == nil {
+			a = &agg{}
+		}
+		rows = append(rows, row{WorkCenterID: wc.ID, WorkCenter: wc.Name,
+			Waiting: a.waiting, Assigned: a.assigned, Running: a.running, DoneToday: a.doneToday})
+	}
 	response.OK2(c, rows)
 }
 
