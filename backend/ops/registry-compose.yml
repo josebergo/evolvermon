@@ -1,0 +1,26 @@
+# compose-micro.yml 形态的注册表（ops-admin 容器内路径）。
+# driver=compose：经 docker compose CLI 控制服务生命周期（需挂载 docker.sock）。
+services:
+  - name: gateway
+    url: http://gateway:8080
+    driver: none
+  - name: identity
+    url: http://identity:8081
+    driver: compose
+    composeProject: evolver-mon
+    composeFile: /etc/evolvermon/compose-micro.yml
+  - name: core
+    url: http://core:8082
+    driver: compose
+    composeProject: evolver-mon
+    composeFile: /etc/evolvermon/compose-micro.yml
+  - name: integration
+    url: http://integration:8083
+    driver: compose
+    composeProject: evolver-mon
+    composeFile: /etc/evolvermon/compose-micro.yml
+  - name: scheduler
+    url: http://scheduler:8084
+    driver: compose
+    composeProject: evolver-mon
+    composeFile: /etc/evolvermon/compose-micro.yml

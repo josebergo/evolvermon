@@ -43,6 +43,8 @@ var tableSchema = map[string]string{
 	// integration
 	"device_telemetries": SchemaIntegration, "webhook_deliveries": SchemaIntegration,
 	"webhook_endpoints": SchemaIntegration,
+	// ops（Phase 1.5 ops-admin；Lite 部署同样建表，空置无副作用）
+	"ops_audit_logs": SchemaOps, "ops_alerts": SchemaOps,
 }
 
 // SchemaOf 表所属 schema；未登记的表（如 schema_migrations 元表）返回空串。

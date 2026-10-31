@@ -1,0 +1,129 @@
+# EvolverMon Micro 形态一键部署（微服务方案 Phase 1.7，NFR-020 形态②）。
+# 使用：docker compose -f compose-micro.yml up -d --build
+# 说明：本机开发验证用 run-micro.sh（进程形态）；本文件面向容器部署，
+#       默认 Lite（docker-compose.yml）不变，两者共用同一镜像构建。
+# 拓扑：db + gateway(80) + identity/core/integration/scheduler/ops-admin + web(前端)
+# 迁移与种子只在 identity 执行（EM_MIGRATE=1），其余服务 EM_MIGRATE=0 只等库就绪。
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evolver
+      POSTGRES_PASSWORD: evolver_pass_change_me
+      POSTGRES_DB: evolvermon
+    volumes:
+      - pgdata_micro:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolver -d evolvermon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  identity: # 迁移+种子责任方（启动顺序第一位）
+    build: ./backend
+    command: ["./identity"]
+    environment: &svc_env
+      EM_DATABASE_DSN: "host=db port=5432 user=evolver password=evolver_pass_change_me dbname=evolvermon sslmode=disable TimeZone=Asia/Shanghai"
+      EM_JWT_SECRET: "change-me-to-a-random-64-char-string"
+      EM_SEED_DEMO: "true"
+      EM_HTTP_ADDR: ":8081"
+      EM_MIGRATE: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  core: # 核心交易域（master/erp/mes/wms）
+    build: ./backend
+    command: ["./server"]
+    environment:
+      <<: *svc_env
+      EM_HTTP_ADDR: ":8082"
+      EM_MIGRATE: "0"
+      EM_ROLES: core
+      EM_SERVICE: core
+    depends_on:
+      identity:
+        condition: service_healthy
+    healthcheck: &hc
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8082/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  integration:
+    build: ./backend
+    command: ["./integration"]
+    environment:
+      <<: *svc_env
+      EM_HTTP_ADDR: ":8083"
+      EM_MIGRATE: "0"
+    depends_on:
+      identity:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler: # 定时 MRP（无业务 HTTP，探针端口 8084）
+    build: ./backend
+    command: ["./scheduler"]
+    environment:
+      <<: *svc_env
+      EM_HTTP_ADDR: ":8084"
+      EM_MIGRATE: "0"
+      EM_MRP_AUTO_MINUTES: "30"
+    depends_on:
+      identity:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ops-admin: # 统一管理平台（仅内网；compose 驱动经挂载 docker.sock 控制）
+    build: ./backend
+    command: ["./ops-admin"]
+    environment:
+      <<: *svc_env
+      EM_HTTP_ADDR: ":8090"
+      EM_MIGRATE: "0"
+      EM_REGISTRY_PATH: "/etc/evolvermon/registry-compose.yml"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend/ops/registry-compose.yml:/etc/evolvermon/registry-compose.yml:ro
+      - ./compose-micro.yml:/etc/evolvermon/compose-micro.yml:ro
+    depends_on:
+      - identity
+    restart: unless-stopped
+
+  gateway:
+    build: ./backend
+    command: ["./gateway"]
+    environment:
+      EM_HTTP_ADDR: ":8080"
+      EM_IDENTITY_URL: "http://identity:8081"
+      EM_CORE_URL: "http://core:8082"
+      EM_INTEGRATION_URL: "http://integration:8083"
+      EM_OPS_URL: "http://ops-admin:8090"
+    ports:
+      - "80:8080" # 唯一对外入口
+    depends_on:
+      - identity
+      - core
+      - integration
+      - ops-admin
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "8088:80"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  pgdata_micro:

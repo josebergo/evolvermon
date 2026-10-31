@@ -61,6 +61,8 @@ func Migrate(db *gorm.DB) error {
 		&model.WebhookEndpoint{}, &model.WebhookDelivery{}, &model.DeviceTelemetry{},
 		// 补齐
 		&model.Attachment{},
+		// ops（Phase 1.5 ops-admin）
+		&model.OpsAuditLog{}, &model.OpsAlert{},
 	)
 }
 

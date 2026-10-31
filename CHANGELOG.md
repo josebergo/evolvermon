@@ -2,6 +2,14 @@
 
 里程碑（M1–M6）与功能清单。每个 M 均以 `scripts/verify-golden-path.sh` 端到端验证通过为发布门槛。
 
+## v0.9.0（Phase 1 · 微服务形态落地：服务拆分 + 统一管理平台）
+按 [微服务方案](docs/03-design/microservices-architecture.md) 完成边缘域拆分与统一运维面，**Lite 单进程形态保持默认且行为不变**：
+- 服务拆分（6 部署单元）：`cmd/identity`（认证/租户/RBAC/审计）· `cmd/integration`（webhook/遥测/建议+投递 worker）· `cmd/scheduler`（定时 MRP，分布式锁互斥）· `cmd/server EM_ROLES=core`（核心交易域）· `cmd/gateway`（自研轻量反代，路径分流）· `cmd/ops-admin`（管理平台）
+- **统一管理平台 ops-admin**：registry.yml 服务注册、10s 健康聚合、启停 Driver（process/compose/none 三适配）、/metrics 抓取解析 + 24h 环形存储、service_down 告警开闭单、运维审计 append-only；前端新增「系统运维」页（服务卡片/启停二次确认/告警/审计）
+- 双形态部署：`scripts/run-micro.sh`（本机多进程，业务服务经管理平台 API 拉起）· `compose-micro.yml`（容器形态）；`EM_ROLES`/`EM_MIGRATE` 分工：identity 迁移+种子责任方
+- 验证：金路径 **64/64 双形态全过**（全部流量经网关分流）；管理平台 **17/17**（含杀 integration 故障隔离：核心单据流转不受影响）；200 并发报工经网关 **P99=29ms**（门槛 48ms，基线 32ms）
+- 单测新增：gateway 路由矩阵（21 例）/ ops registry·解析·驱动（4 项）
+
 ## v0.7.0（基础设施端口层：RabbitMQ / Kafka / Redis 可插拔）
 端口-适配器架构（`backend/internal/infra`），默认零外部中间件、按环境变量切换，业务代码不感知（[设计文档](docs/03-design/infra-ports.md)）：
 - 三个端口：消息总线 `Broker`（发布/订阅）、缓存 `Cache`、分布式锁 `Locker`；统一消息信封 `infra.Message`（跨中间件格式一致）

@@ -1,20 +1,23 @@
-// EvolverMon API Server 入口（cmd/server/main.go）。
+// EvolverMon API Server 入口（cmd/server）。
+// Lite 形态（默认 EM_ROLES=all）：单进程聚合全部域 + webhook worker + 定时 MRP。
+// Micro 形态：EM_ROLES=core 时仅核心交易域（master/erp/mes/wms），platform/integration
+// 由 cmd/identity、cmd/integration 独立进程承载，定时 MRP 由 cmd/scheduler 承载。
 package main
 
 import (
-	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
 	"github.com/evolvermon/evolvermon/internal/infra"
-	"github.com/evolvermon/evolvermon/internal/model"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
 	"github.com/evolvermon/evolvermon/internal/pkg/logx"
 	"github.com/evolvermon/evolvermon/internal/router"
+	"github.com/evolvermon/evolvermon/internal/scheduler"
 	"github.com/evolvermon/evolvermon/seed"
 )
 
@@ -26,8 +29,9 @@ func getenvDefault(k, def string) string {
 }
 
 func main() {
+	roles := getenvDefault("EM_ROLES", "all")
 	// Phase 0.4：结构化日志（Lite 形态 service=evolvermon；Micro 各 cmd/<svc> 各自命名）
-	logx.Init(getenvDefault("EM_SERVICE", "evolvermon"))
+	logx.Init(getenvDefault("EM_SERVICE", map[string]string{"all": "evolvermon", "core": "core"}[roles]))
 
 	cfg := config.Load()
 
@@ -42,15 +46,19 @@ func main() {
 		log.Printf("waiting for database (%d/10)...", i)
 		time.Sleep(3 * time.Second)
 	}
-	version, err := data.MigrateVersioned(db)
-	if err != nil {
-		log.Fatalf("migrate failed: %v", err)
+	if os.Getenv("EM_MIGRATE") != "0" {
+		version, err := data.MigrateVersioned(db)
+		if err != nil {
+			log.Fatalf("migrate failed: %v", err)
+		}
+		log.Printf("schema at version %d", version)
+		if os.Getenv("EM_MIGRATE_ONLY") == "1" {
+			return // 仅执行迁移（部署/CI 用）
+		}
+	} else {
+		log.Printf("migrate skipped (EM_MIGRATE=0)")
 	}
-	log.Printf("schema at version %d", version)
-	if os.Getenv("EM_MIGRATE_ONLY") == "1" {
-		return // 仅执行迁移（部署/CI 用）
-	}
-	if cfg.SeedDemo {
+	if cfg.SeedDemo && (roles == "all" || roles == "platform") {
 		if err := seed.Run(db); err != nil {
 			log.Printf("seed failed (non-fatal): %v", err)
 		}
@@ -70,43 +78,40 @@ func main() {
 	log.Printf("infra ready: broker=%s cache=%s(locker=%s)", in.Broker.Name(), in.Cache.Name(), in.Locker.Name())
 	events.UseBroker(in.Broker)
 
-	events.StartWorker(db)
-	r := router.New(db, jm)
+	// Micro 分工：webhook 投递 worker 只在聚合/集成进程跑；定时 MRP 在聚合/scheduler 进程跑
+	if roles == "all" || roles == "integration" {
+		events.StartWorker(db)
+	}
+	r := router.New(db, jm, routerDomains(roles)...)
 
 	// 定时自动 MRP（FR-ERP-077 M2）：EM_MRP_AUTO_MINUTES>0 时启用，逐工厂运行并记录摘要
-	if mins := config.MrpAutoMinutes(); mins > 0 {
-		go func() {
-			ticker := time.NewTicker(time.Duration(mins) * time.Minute)
-			defer ticker.Stop()
-			for range ticker.C {
-				// 多副本部署时用分布式锁保证同一时刻只有一个实例跑 MRP
-				release, ok, err := in.Locker.Acquire(context.Background(), "mrp-auto", time.Duration(mins)*time.Minute)
-				if err != nil {
-					log.Printf("[mrp-auto] lock: %v, skip this round", err)
-					continue
-				}
-				if !ok {
-					continue // 其他副本持有
-				}
-				var factories []model.Factory
-				db.Where("status=1").Find(&factories)
-				for _, f := range factories {
-					if err := data.RunScheduledMrp(db, f.TenantID, f.ID); err != nil {
-						log.Printf("[mrp-auto] factory %d: %v", f.ID, err)
-					}
-				}
-				release()
-			}
-		}()
-		log.Printf("scheduled MRP enabled: every %d minutes", config.MrpAutoMinutes())
+	if mins := config.MrpAutoMinutes(); mins > 0 && (roles == "all" || roles == "scheduler") {
+		go scheduler.StartMrpTicker(db, in.Locker, mins, nil)
 	}
 
 	port := cfg.HTTPAddr
 	if p := os.Getenv("PORT"); p != "" {
 		port = ":" + p
 	}
-	log.Printf("EvolverMon API listening on %s (env=%s)", port, cfg.Env)
+	log.Printf("EvolverMon API (%s) listening on %s (env=%s)", roles, port, cfg.Env)
 	if err := r.Run(port); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// routerDomains EM_ROLES → 路由域（空 = 全部注册，Lite 行为不变）。
+func routerDomains(roles string) []string {
+	switch strings.TrimSpace(roles) {
+	case "all":
+		return nil
+	case "core":
+		return []string{"core"}
+	case "platform":
+		return []string{"platform"}
+	case "integration":
+		return []string{"integration"}
+	default:
+		log.Fatalf("invalid EM_ROLES: %s (all|core|platform|integration)", roles)
+		return nil
 	}
 }

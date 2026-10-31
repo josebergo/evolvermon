@@ -65,3 +65,6 @@ ALTER TABLE IF EXISTS public.stocktakings SET SCHEMA wms;
 ALTER TABLE IF EXISTS public.device_telemetries SET SCHEMA integration;
 ALTER TABLE IF EXISTS public.webhook_deliveries SET SCHEMA integration;
 ALTER TABLE IF EXISTS public.webhook_endpoints SET SCHEMA integration;
+-- ops（Phase 1.5 新增；存量库由 ops-admin AutoMigrate 直建于 schema，此处幂等空转）
+ALTER TABLE IF EXISTS public.ops_audit_logs SET SCHEMA ops;
+ALTER TABLE IF EXISTS public.ops_alerts SET SCHEMA ops;

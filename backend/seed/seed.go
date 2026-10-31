@@ -28,6 +28,7 @@ func menus() []menuSeed {
 		{13, 10, "用户管理", "/system/users", "", 3, model.MenuPage, "plt:user"},
 		{14, 10, "角色权限", "/system/roles", "", 4, model.MenuPage, "plt:role"},
 		{15, 10, "审计日志", "/system/audit-logs", "", 5, model.MenuPage, "plt:audit"},
+		{19, 10, "系统运维", "/system/ops", "", 9, model.MenuPage, "ops:service"},
 		{16, 10, "系统参数", "/system/params", "", 6, model.MenuPage, "plt:param"},
 		{17, 10, "集团视图", "/system/group", "", 7, model.MenuPage, "plt:perm"},
 		{18, 10, "Webhook 事件", "/system/webhooks", "", 8, model.MenuPage, "plt:perm"},

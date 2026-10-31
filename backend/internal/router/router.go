@@ -133,7 +133,9 @@ func userAfterCreate(db *gorm.DB, ac *middleware.AuthCtx, u *model.User) error {
 	return nil
 }
 
-func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
+// New 装配路由。domains 为空注册全部（Lite 单进程形态）；
+// Micro 形态按域注册：identity=platform、core=master/erp/mes/wms、integration=m6。
+func New(db *gorm.DB, jm *jwtx.Manager, domains ...string) *gin.Engine {
 	dbRef = db
 	r := gin.New()
 	r.Use(gin.Recovery(), middleware.Trace(), metrics.Middleware(), middleware.Logger(), middleware.CORS("*"))
@@ -149,19 +151,64 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	})
 	r.GET("/metrics", metrics.Handler())
 
+	v1 := r.Group("/api/v1")
+	v1.Use(middleware.Auth(jm, db))
+
+	wants := func(d string) bool {
+		if len(domains) == 0 {
+			return true
+		}
+		for _, x := range domains {
+			if x == d {
+				return true
+			}
+		}
+		return false
+	}
+	if wants("platform") {
+		registerPlatform(r, v1, db, jm)
+	}
+	if wants("core") {
+		registerCore(v1, db)
+	}
+	if wants("integration") {
+		registerIntegration(v1, db)
+	}
+
+	// 托管前端构建产物（存在时）：单二进制/单容器部署形态（NFR-020）
+	webDir := os.Getenv("EM_WEB_DIR")
+	if webDir == "" {
+		webDir = "../frontend/dist"
+	}
+	if st, err := os.Stat(webDir); err == nil && st.IsDir() {
+		index := webDir + "/index.html"
+		r.Static("/assets", webDir+"/assets")
+		r.StaticFile("/favicon.ico", webDir+"/favicon.ico")
+		r.NoRoute(func(c *gin.Context) {
+			if strings.HasPrefix(c.Request.URL.Path, "/api") {
+				c.JSON(404, gin.H{"code": 404, "message": "not found"})
+				return
+			}
+			p := webDir + c.Request.URL.Path
+			if _, err := os.Stat(p); err == nil {
+				c.File(p)
+				return
+			}
+			c.File(index) // SPA 路由回退
+		})
+	}
+
+	return r
+
+}
+
+// registerPlatform identity 域：认证/租户/用户/角色/工厂/仓区/审计/参数/单号规则/附件。
+func registerPlatform(r *gin.Engine, v1 *gin.RouterGroup, db *gorm.DB, jm *jwtx.Manager) {
 	authAPI := &platformapi.AuthAPI{DB: db, JM: jm}
-	erp := &erpapi.ErpAPI{DB: db}
-	mes := &mesapi.MesAPI{DB: db}
-	wms := &wmsapi.WmsAPI{DB: db}
-	mrp := &erpapi.MrpAPI{DB: db}
-	mst := &masterapi.MasterAPI{DB: db}
 	plt := &platformapi.PlatformAPI{DB: db}
-	board := &mesapi.BoardAPI{DB: db}
 
 	r.POST("/api/v1/auth/login", authAPI.Login)
 
-	v1 := r.Group("/api/v1")
-	v1.Use(middleware.Auth(jm, db))
 
 	act(v1, "", "POST", "/auth/refresh", authAPI.Refresh)
 	act(v1, "", "GET", "/auth/profile", authAPI.Profile)
@@ -217,7 +264,21 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	act(v1, "plt:param", "GET", "/doc-rules", plt.ListDocRules)
 	act(v1, "plt:param", "PUT", "/doc-rules/:id", plt.UpdateDocRule)
 	act(v1, "plt:user", "PUT", "/users/:id/reset-password", plt.ResetPassword)
+	// 附件（总册 7.3.1）：登录即可，按租户隔离
+	attach := &platformapi.AttachmentAPI{DB: db}
+	act(v1, "", "POST", "/attachments", attach.Upload)
+	act(v1, "", "GET", "/attachments", attach.List)
+	act(v1, "", "GET", "/attachments/:id/download", attach.Download)
+}
 
+// registerCore 核心交易域：主数据/销售/采购/MRP/计划/工单/质检/库存/调拨/看板/追溯/打印。
+func registerCore(v1 *gin.RouterGroup, db *gorm.DB) {
+	erp := &erpapi.ErpAPI{DB: db}
+	mes := &mesapi.MesAPI{DB: db}
+	wms := &wmsapi.WmsAPI{DB: db}
+	mrp := &erpapi.MrpAPI{DB: db}
+	mst := &masterapi.MasterAPI{DB: db}
+	board := &mesapi.BoardAPI{DB: db}
 	// ---- 主数据 ----
 	crudRes[model.Material](v1, db, "erp:material", "/materials", crud.Options[model.Material]{
 		FactoryScoped: false, SearchCols: []string{"code", "name", "spec"}, FilterCols: []string{"category", "source_type"},
@@ -331,20 +392,7 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	transfer := &wmsapi.TransferAPI{DB: db}
 	act(v1, "wms:stockorder", "POST", "/transfers", transfer.Create)
 	act(v1, "plt:perm", "GET", "/group/summary", transfer.GroupSummary)
-	// M6：事件出口 + 设备遥测 + 智能建议
-	ext := &integrationapi.ExtAPI{DB: db}
-	act(v1, "plt:perm", "GET", "/webhooks", ext.ListWebhooks)
-	act(v1, "plt:perm", "POST", "/webhooks", ext.CreateWebhook)
-	act(v1, "plt:perm", "DELETE", "/webhooks/:id", ext.DeleteWebhook)
-	act(v1, "plt:perm", "GET", "/webhook-deliveries", ext.ListDeliveries)
-	act(v1, "mes:report", "POST", "/devices/:code/telemetry", ext.PushTelemetry)
-	act(v1, "mes:report", "GET", "/devices/telemetry/latest", ext.LatestTelemetry)
-	act(v1, "mes:workorder", "GET", "/advisor/insights", ext.Insights)
-	// 附件（总册 7.3.1）：登录即可，按租户隔离
-	attach := &platformapi.AttachmentAPI{DB: db}
-	act(v1, "", "POST", "/attachments", attach.Upload)
-	act(v1, "", "GET", "/attachments", attach.List)
-	act(v1, "", "GET", "/attachments/:id/download", attach.Download)
+
 	act(v1, "mes:quality", "GET", "/trace/work-order/:id", mst.TraceWorkOrder)
 	// M3：生产计划域
 	plan := &erpapi.PlanAPI{DB: db}
@@ -383,29 +431,17 @@ func New(db *gorm.DB, jm *jwtx.Manager) *gin.Engine {
 	act(v1, "wms:stockorder", "POST", "/stocktakings/:id/start", wms.StartStocktaking)
 	act(v1, "wms:stockorder", "POST", "/stocktakings/:id/lines/:lineId", wms.CountLine)
 	act(v1, "wms:stockorder", "POST", "/stocktakings/:id/finish", wms.FinishStocktaking)
+}
 
-	// 托管前端构建产物（存在时）：单二进制/单容器部署形态（NFR-020）
-	webDir := os.Getenv("EM_WEB_DIR")
-	if webDir == "" {
-		webDir = "../frontend/dist"
-	}
-	if st, err := os.Stat(webDir); err == nil && st.IsDir() {
-		index := webDir + "/index.html"
-		r.Static("/assets", webDir+"/assets")
-		r.StaticFile("/favicon.ico", webDir+"/favicon.ico")
-		r.NoRoute(func(c *gin.Context) {
-			if strings.HasPrefix(c.Request.URL.Path, "/api") {
-				c.JSON(404, gin.H{"code": 404, "message": "not found"})
-				return
-			}
-			p := webDir + c.Request.URL.Path
-			if _, err := os.Stat(p); err == nil {
-				c.File(p)
-				return
-			}
-			c.File(index) // SPA 路由回退
-		})
-	}
-
-	return r
+// registerIntegration 生态域：webhook 出口/设备遥测/智能建议。
+func registerIntegration(v1 *gin.RouterGroup, db *gorm.DB) {
+	// M6：事件出口 + 设备遥测 + 智能建议
+	ext := &integrationapi.ExtAPI{DB: db}
+	act(v1, "plt:perm", "GET", "/webhooks", ext.ListWebhooks)
+	act(v1, "plt:perm", "POST", "/webhooks", ext.CreateWebhook)
+	act(v1, "plt:perm", "DELETE", "/webhooks/:id", ext.DeleteWebhook)
+	act(v1, "plt:perm", "GET", "/webhook-deliveries", ext.ListDeliveries)
+	act(v1, "mes:report", "POST", "/devices/:code/telemetry", ext.PushTelemetry)
+	act(v1, "mes:report", "GET", "/devices/telemetry/latest", ext.LatestTelemetry)
+	act(v1, "mes:workorder", "GET", "/advisor/insights", ext.Insights)
 }

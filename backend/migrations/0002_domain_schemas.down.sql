@@ -45,3 +45,5 @@ ALTER TABLE IF EXISTS wms.stocktakings SET SCHEMA public;
 ALTER TABLE IF EXISTS integration.device_telemetries SET SCHEMA public;
 ALTER TABLE IF EXISTS integration.webhook_deliveries SET SCHEMA public;
 ALTER TABLE IF EXISTS integration.webhook_endpoints SET SCHEMA public;
+ALTER TABLE IF EXISTS ops.ops_audit_logs SET SCHEMA public;
+ALTER TABLE IF EXISTS ops.ops_alerts SET SCHEMA public;

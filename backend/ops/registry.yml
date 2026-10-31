@@ -1,0 +1,37 @@
+# 统一管理平台服务注册表（Phase 1.5）。
+# process 驱动 = 本机多进程形态（run-micro.sh / 裸机部署）；compose 驱动 = docker compose 形态
+# （composeProject/composeFile 指定项目与文件）；none = 仅观测不可控（gateway / ops-admin 自身）。
+services:
+  - name: gateway
+    url: http://127.0.0.1:8080
+    driver: none
+  - name: identity
+    url: http://127.0.0.1:8081
+    driver: process
+    start: ./identity.exe
+    dir: .
+  - name: core
+    url: http://127.0.0.1:8082
+    driver: process
+    start: ./server.exe
+    dir: .
+    env:
+      EM_ROLES: core
+      EM_HTTP_ADDR: ":8082"
+      EM_MIGRATE: "0"
+  - name: integration
+    url: http://127.0.0.1:8083
+    driver: process
+    start: ./integration.exe
+    dir: .
+    env:
+      EM_HTTP_ADDR: ":8083"
+      EM_MIGRATE: "0"
+  - name: scheduler
+    url: http://127.0.0.1:8084
+    driver: process
+    start: ./scheduler.exe
+    dir: .
+    env:
+      EM_HTTP_ADDR: ":8084"
+      EM_MIGRATE: "0"

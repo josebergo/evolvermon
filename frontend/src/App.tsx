@@ -11,6 +11,7 @@ const Warehouses = lazy(() => import('./pages/system/Warehouses'))
 const Users = lazy(() => import('./pages/system/Users'))
 const Roles = lazy(() => import('./pages/system/Roles'))
 const AuditLogs = lazy(() => import('./pages/system/AuditLogs'))
+const OpsServices = lazy(() => import('./pages/system/OpsServices'))
 const Params = lazy(() => import('./pages/system/Params'))
 const Materials = lazy(() => import('./pages/master/Materials'))
 const Boms = lazy(() => import('./pages/master/Boms'))
@@ -75,6 +76,7 @@ export default function App() {
             <Route path="system/users" element={<Users />} />
             <Route path="system/roles" element={<Roles />} />
             <Route path="system/audit-logs" element={<AuditLogs />} />
+            <Route path="system/ops" element={<OpsServices />} />
             <Route path="system/params" element={<Params />} />
             <Route path="master/materials" element={<Materials />} />
             <Route path="master/boms" element={<Boms />} />
