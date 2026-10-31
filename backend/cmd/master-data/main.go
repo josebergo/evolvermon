@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/evolvermon/evolvermon/internal/wire"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/infra"
@@ -18,6 +19,7 @@ import (
 
 func main() {
 	logx.Init("master-data")
+	wire.Identity() // Phase 2：identity 远程通道（单号/审计/认证上下文；未设 EM_IDENTITY_URL 时 no-op）
 	cfg := config.Load()
 
 	db, err := data.Open(cfg.DatabaseDSN)

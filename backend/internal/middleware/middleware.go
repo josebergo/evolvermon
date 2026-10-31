@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -84,7 +85,62 @@ func GetAuth(c *gin.Context) *AuthCtx {
 	return nil
 }
 
-// Auth 解析 JWT 并加载权限（每次请求查库，规模上来后可加缓存）。
+// UserLoad 用户加载结果（Auth 内部；默认直连 DB，EM_IDENTITY_URL 时经 wire 注入远程实现）。
+type UserLoad struct {
+	TenantID  int64
+	Username  string
+	FactoryID int64
+	IsSuper   bool
+	Perms     map[string]bool
+	DataScope model.DataScope
+}
+
+// userLoader 用户加载器（nil=直连 DB；SetUserLoader 注入 identity 远程加载）。
+var userLoader func(db *gorm.DB, userID int64) (*UserLoad, error)
+
+// SetUserLoader 注入用户加载器（各 main 启动时调用一次；wire.Identity 自动接线）。
+func SetUserLoader(l func(db *gorm.DB, userID int64) (*UserLoad, error)) { userLoader = l }
+
+// loadUser 默认实现：直连 platform 表（Lite / identity 服务自身）。
+func loadUser(db *gorm.DB, userID int64) (*UserLoad, error) {
+	var user model.User
+	if err := db.First(&user, userID).Error; err != nil || user.Status != 1 {
+		return nil, fmt.Errorf("user disabled")
+	}
+	out := &UserLoad{
+		TenantID: user.TenantID, Username: user.Username,
+		IsSuper: user.IsSuper, Perms: map[string]bool{},
+	}
+	var uf model.UserFactory
+	if err := db.Where("user_id=?", userID).First(&uf).Error; err == nil {
+		out.FactoryID = uf.FactoryID
+	}
+	if user.IsSuper {
+		out.Perms["*"] = true
+		out.DataScope = model.ScopeTenant
+		return out, nil
+	}
+	var roles []model.Role
+	db.Joins("JOIN platform.user_roles ur ON ur.role_id = roles.id AND ur.user_id = ?", userID).
+		Where("roles.status = 1").Find(&roles)
+	scope := model.ScopeSelf
+	for _, r := range roles {
+		if r.DataScope == model.ScopeTenant {
+			scope = model.ScopeTenant
+		} else if r.DataScope == model.ScopeFactory && scope != model.ScopeTenant {
+			scope = model.ScopeFactory
+		}
+		for _, p := range strings.Split(r.PermCodes, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out.Perms[p] = true
+			}
+		}
+	}
+	out.DataScope = scope
+	return out, nil
+}
+
+// Auth 解析 JWT 并加载权限（默认每次请求查库；远程模式经 identity 内部 API，wire 接线）。
 // 打印等新窗口场景支持 ?access_token= 查询参数兜底。
 func Auth(jm *jwtx.Manager, db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -103,50 +159,27 @@ func Auth(jm *jwtx.Manager, db *gorm.DB) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Body{Code: response.ErrAuth, Message: "invalid token"})
 			return
 		}
-		var user model.User
-		if err := db.First(&user, cl.UserID).Error; err != nil || user.Status != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Body{Code: response.ErrAuth, Message: "user disabled"})
+		loader := userLoader
+		if loader == nil {
+			loader = loadUser
+		}
+		ul, err := loader(db, cl.UserID)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Body{Code: response.ErrAuth, Message: err.Error()})
 			return
 		}
-		if user.TenantID != cl.TenantID {
+		if ul.TenantID != cl.TenantID {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Body{Code: response.ErrAuth, Message: "tenant mismatch"})
 			return
 		}
-		ac := &AuthCtx{
-			UserID: user.ID, TenantID: user.TenantID, FactoryID: cl.FactoryID,
-			IsSuper: user.IsSuper, Username: user.Username,
-			Perms: map[string]bool{},
+		factoryID := cl.FactoryID
+		if factoryID == 0 {
+			factoryID = ul.FactoryID // 未选工厂时默认第一个可访问工厂
 		}
-		if ac.FactoryID == 0 {
-			// 未选工厂时默认第一个可访问工厂
-			var uf model.UserFactory
-			if err := db.Where("user_id=?", user.ID).First(&uf).Error; err == nil {
-				ac.FactoryID = uf.FactoryID
-			}
-		}
-		if user.IsSuper {
-			ac.Perms["*"] = true
-			ac.DataScope = model.ScopeTenant
-		} else {
-			var roles []model.Role
-			db.Joins("JOIN platform.user_roles ur ON ur.role_id = roles.id AND ur.user_id = ?", user.ID).
-				Where("roles.status = 1").Find(&roles)
-			scope := model.ScopeSelf
-			for _, r := range roles {
-				if r.DataScope == model.ScopeTenant {
-					scope = model.ScopeTenant
-				} else if r.DataScope == model.ScopeFactory && scope != model.ScopeTenant {
-					scope = model.ScopeFactory
-				}
-				for _, p := range strings.Split(r.PermCodes, ",") {
-					if p = strings.TrimSpace(p); p != "" {
-						ac.Perms[p] = true
-					}
-				}
-			}
-			ac.DataScope = scope
-		}
-		c.Set("auth", ac)
+		c.Set("auth", &AuthCtx{
+			UserID: cl.UserID, TenantID: ul.TenantID, FactoryID: factoryID,
+			IsSuper: ul.IsSuper, Username: ul.Username, Perms: ul.Perms, DataScope: ul.DataScope,
+		})
 		c.Next()
 	}
 }

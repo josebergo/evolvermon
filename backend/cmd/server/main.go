@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/evolvermon/evolvermon/internal/client"
+	"github.com/evolvermon/evolvermon/internal/wire"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
@@ -34,6 +35,7 @@ func main() {
 	roles := getenvDefault("EM_ROLES", "all")
 	// Phase 0.4：结构化日志（Lite 形态 service=evolvermon；Micro 各 cmd/<svc> 各自命名）
 	logx.Init(getenvDefault("EM_SERVICE", map[string]string{"all": "evolvermon", "core": "core"}[roles]))
+	wire.Identity() // Phase 2：identity 远程通道（单号/审计/认证上下文；未设 EM_IDENTITY_URL 时 no-op）
 
 	cfg := config.Load()
 

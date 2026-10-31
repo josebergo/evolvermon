@@ -19,6 +19,7 @@ services:
       EM_HTTP_ADDR: ":8085"
       EM_MIGRATE: "0"
       EM_INTERNAL_TOKEN: "dev-internal-token"
+      EM_IDENTITY_URL: "http://127.0.0.1:8081"
   - name: core
     url: http://127.0.0.1:8082
     driver: process
@@ -30,6 +31,7 @@ services:
       EM_MIGRATE: "0"
       EM_MASTER_URL: "http://127.0.0.1:8085"
       EM_INTERNAL_TOKEN: "dev-internal-token"
+      EM_IDENTITY_URL: "http://127.0.0.1:8081"
   - name: integration
     url: http://127.0.0.1:8083
     driver: process

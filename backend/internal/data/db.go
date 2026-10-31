@@ -93,7 +93,13 @@ var docPrefixes = map[string]string{
 }
 
 // NextDocNo 原子递增序列并格式化：前缀-日期-流水。
+// RemoteDocNo 远程取号钩子（Phase 2 第二批：EM_IDENTITY_URL 时由 wire 注入；identity 自身不设）。
+var RemoteDocNo func(tenantID int64, docType string) (string, error)
+
 func NextDocNo(db *gorm.DB, tenantID int64, docType string) (string, error) {
+	if RemoteDocNo != nil {
+		return RemoteDocNo(tenantID, docType) // 单号规则归 identity（行锁强一致在服务端）
+	}
 	prefix, ok := docPrefixes[docType]
 	if !ok {
 		return "", fmt.Errorf("unknown doc type %s", docType)
@@ -143,6 +149,9 @@ func RunScheduledMrp(db *gorm.DB, tenantID, factoryID int64) error {
 }
 
 // ---------------- 审计助手 ----------------
+
+// RemoteAudit 远程审计钩子（尽力而为；wire 注入）。
+var RemoteAudit func(payload map[string]any)
 
 func Audit(db *gorm.DB, ac *middleware.AuthCtx, ip, action, objType, objID, objDesc, before, after string) {
 	if ac == nil {

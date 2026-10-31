@@ -32,8 +32,8 @@ EM_HTTP_ADDR=":8081" ./identity.exe > .pids-identity.log 2>&1 &
 wait_ready http://127.0.0.1:8081/readyz || { tail -3 .pids-identity.log; exit 1; }
 
 echo "== 启动 ops-admin + gateway（自不管辖） =="
-EM_HTTP_ADDR=":8180" ./ops-admin.exe > .pids-ops-admin.log 2>&1 &
-EM_HTTP_ADDR=":8085" EM_INTERNAL_TOKEN="dev-internal-token" EM_MIGRATE=0 ./master-data.exe > .pids-master-data.log 2>&1 &
+EM_HTTP_ADDR=":8180" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" ./ops-admin.exe > .pids-ops-admin.log 2>&1 &
+EM_HTTP_ADDR=":8085" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" EM_MIGRATE=0 ./master-data.exe > .pids-master-data.log 2>&1 &
 EM_MASTER_URL="http://127.0.0.1:8085" ./gateway.exe > .pids-gateway.log 2>&1 &
 wait_ready http://127.0.0.1:8180/readyz
 wait_ready http://127.0.0.1:8085/readyz || { tail -3 .pids-master-data.log; exit 1; } || { tail -3 .pids-ops-admin.log; exit 1; }
