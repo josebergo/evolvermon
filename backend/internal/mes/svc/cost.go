@@ -2,6 +2,8 @@
 package svc
 
 import (
+	"context"
+	"github.com/evolvermon/evolvermon/internal/client"
 	"gorm.io/gorm"
 
 	"github.com/evolvermon/evolvermon/internal/data"
@@ -21,8 +23,7 @@ func CostWorkOrder(tx *gorm.DB, ac *middleware.AuthCtx, woID int64) (float64, er
 		Where("source_type='picking' AND source_doc_id=?", wo.ID).Find(&picks)
 	for _, p := range picks {
 		for _, l := range p.Lines {
-			var mat model.Material
-			tx.Scopes(data.ScopeFor(ac, false)).First(&mat, l.MaterialID)
+			mat, _ := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
 			matCost += l.DoneQty * mat.Price
 		}
 	}

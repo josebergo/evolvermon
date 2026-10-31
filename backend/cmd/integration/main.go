@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/evolvermon/evolvermon/internal/wire"
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
@@ -43,6 +44,8 @@ func main() {
 	} else {
 		log.Printf("migrate skipped (EM_MIGRATE=0)")
 	}
+
+	client.InitDefaultMaster(db) // 主数据读通道默认装配（Lite=Local 直连）
 
 	jm := jwtx.New(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTLHour, cfg.RefreshTTLDay)
 	in, err := infra.Open(infra.Options{Broker: cfg.Broker, BrokerURL: cfg.BrokerURL, Cache: cfg.Cache, CacheURL: cfg.CacheURL})

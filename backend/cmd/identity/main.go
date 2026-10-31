@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/infra"
@@ -45,6 +46,8 @@ func main() {
 			log.Printf("seed failed (non-fatal): %v", err)
 		}
 	}
+
+	client.InitDefaultMaster(db) // 主数据读通道默认装配（Lite=Local 直连）
 
 	jm := jwtx.New(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTLHour, cfg.RefreshTTLDay)
 	in, err := infra.Open(infra.Options{Broker: cfg.Broker, BrokerURL: cfg.BrokerURL, Cache: cfg.Cache, CacheURL: cfg.CacheURL})

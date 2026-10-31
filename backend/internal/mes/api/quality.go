@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
 	"github.com/evolvermon/evolvermon/internal/model"
@@ -32,8 +33,7 @@ func (q *QualityAPI) Dispose(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrBadState, "仅「不合格且已选处置方式」的质检单可执行处置"))
 		return
 	}
-	var mat model.Material
-	if err := q.DB.Scopes(data.ScopeFor(ac, false)).First(&mat, rec.MaterialID).Error; err != nil {
+	if _, merr := client.MatRef(c.Request.Context(), ac.TenantID, rec.MaterialID); merr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "物料不存在"))
 		return
 	}

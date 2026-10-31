@@ -3,12 +3,14 @@ package api
 // ERP 交易域：销售订单状态机/发货、请购转采购、采购到货（FR-ERP-050~068）。
 
 import (
+	"context"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
 	"github.com/evolvermon/evolvermon/internal/middleware"
@@ -31,8 +33,7 @@ func (e *ErpAPI) AuditSalesOrder(c *gin.Context) {
 		return
 	}
 	// 校验客户与物料有效（FR-ERP-052）
-	var cust model.Customer
-	if err := e.DB.Scopes(data.ScopeFor(ac, false)).First(&cust, so.CustomerID).Error; err != nil {
+	if _, cerr := client.PartnerRef(c.Request.Context(), ac.TenantID, "customer", so.CustomerID); cerr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "客户不存在或已停用"))
 		return
 	}
@@ -41,8 +42,8 @@ func (e *ErpAPI) AuditSalesOrder(c *gin.Context) {
 			response.Fail(c, response.NewBiz(response.ErrBiz, "行数量必须大于 0"))
 			return
 		}
-		var m model.Material
-		if err := e.DB.Scopes(data.ScopeFor(ac, false)).First(&m, l.MaterialID).Error; err != nil || m.Status != 1 {
+		m, merr := client.MatRef(c.Request.Context(), ac.TenantID, l.MaterialID)
+		if merr != nil || m.Status != 1 {
 			response.Fail(c, response.NewBiz(response.ErrBiz, "物料无效："+conv.I64s(l.MaterialID)))
 			return
 		}
@@ -111,8 +112,8 @@ func (e *ErpAPI) CreateShipment(c *gin.Context) {
 		return
 	}
 	// 成品仓
-	var wh model.Warehouse
-	if err := e.DB.Scopes(data.ScopeFor(ac, true)).Where("type='finished' AND status=1").First(&wh).Error; err != nil {
+	wh, werr := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "finished")
+if werr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置成品仓"))
 		return
 	}
@@ -173,8 +174,7 @@ func (e *ErpAPI) ConvertPRToPO(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrParam, "请购单不存在"))
 		return
 	}
-	var supp model.Supplier
-	if err := e.DB.Scopes(data.ScopeFor(ac, false)).First(&supp, req.SupplierID).Error; err != nil {
+	if _, serr := client.PartnerRef(c.Request.Context(), ac.TenantID, "supplier", req.SupplierID); serr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "供应商不存在"))
 		return
 	}
@@ -198,8 +198,7 @@ func (e *ErpAPI) ConvertPRToPO(c *gin.Context) {
 					continue
 				}
 				no++
-				var mat model.Material
-				tx.Scopes(data.ScopeFor(ac, false)).First(&mat, l.MaterialID)
+				mat, _ := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
 				lines = append(lines, model.PurchaseOrderLine{
 					PurchaseOrderID: po.ID, LineNo: no, MaterialID: l.MaterialID, Qty: remain, Price: mat.Price,
 				})
@@ -255,8 +254,8 @@ func (e *ErpAPI) ArrivePO(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrBadState, "订单未审核或已完结"))
 		return
 	}
-	var wh model.Warehouse
-	if err := e.DB.Scopes(data.ScopeFor(ac, true)).Where("type='raw' AND status=1").First(&wh).Error; err != nil {
+	wh, werr := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "raw")
+if werr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置原料仓"))
 		return
 	}
@@ -277,8 +276,7 @@ func (e *ErpAPI) ArrivePO(c *gin.Context) {
 			if remain <= 0 {
 				continue
 			}
-			var mat model.Material
-			tx.Scopes(data.ScopeFor(ac, false)).First(&mat, l.MaterialID)
+			mat, _ := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
 			if err := tx.Create(&model.StockOrderLine{
 				StockOrderID: order.ID, LineNo: i + 1, MaterialID: l.MaterialID, Qty: remain, Price: l.Price,
 			}).Error; err != nil {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/evolvermon/evolvermon/internal/wire"
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/infra"
@@ -43,6 +44,8 @@ func main() {
 		log.Fatalf("infra open failed: %v", err)
 	}
 	_ = in
+
+	client.InitDefaultMaster(db) // 主数据读通道默认装配（Lite=Local 直连）
 
 	jm := jwtx.New(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTLHour, cfg.RefreshTTLDay)
 	r := router.New(db, jm, "master")

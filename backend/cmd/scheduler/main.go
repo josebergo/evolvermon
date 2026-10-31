@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/infra"
@@ -40,6 +41,8 @@ func main() {
 		log.Printf("migrate skipped (EM_MIGRATE=0)")
 	}
 	wire.Identity() // 分库：工厂列表/单号/sys_params 远程（未设 EM_IDENTITY_URL 时 no-op）
+
+	client.InitDefaultMaster(db) // 主数据读通道默认装配（Lite=Local 直连）
 
 	in, err := infra.Open(infra.Options{Broker: cfg.Broker, BrokerURL: cfg.BrokerURL, Cache: cfg.Cache, CacheURL: cfg.CacheURL})
 	if err != nil {

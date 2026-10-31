@@ -41,8 +41,8 @@ func (t *TransferAPI) Create(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrParam, "调入调出厂不能相同"))
 		return
 	}
-	var mat model.Material
-	if err := t.DB.Scopes(data.ScopeFor(ac, false)).First(&mat, req.MaterialID).Error; err != nil {
+	mat, merr := client.MatRef(c.Request.Context(), ac.TenantID, req.MaterialID)
+	if merr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "物料不存在"))
 		return
 	}
@@ -56,9 +56,9 @@ func (t *TransferAPI) Create(c *gin.Context) {
 		return &wh, nil
 	}
 	kind := "raw"
-	if mat.Category == model.MatFinish {
+	if mat.Category == string(model.MatFinish) {
 		kind = "finished"
-	} else if mat.Category == model.MatSemi {
+	} else if mat.Category == string(model.MatSemi) {
 		kind = "semi"
 	}
 	whOut, err1 := whOf(req.FromFactoryID, kind)

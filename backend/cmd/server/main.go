@@ -80,6 +80,8 @@ func main() {
 		}
 	}
 
+	client.InitDefaultMaster(db) // 主数据读通道默认装配（Lite=Local 直连）
+
 	jm := jwtx.New(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTLHour, cfg.RefreshTTLDay)
 
 	// 基础设施端口层：默认全 memory（单机零依赖）；水平扩展时切换

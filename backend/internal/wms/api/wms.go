@@ -3,6 +3,7 @@ package api
 // WMS：库存过账（行级锁防超卖，core-flows.md §3）、可用量、流水、盘点（FR-WMS 全域）。
 
 import (
+	"context"
 	messvc "github.com/evolvermon/evolvermon/internal/mes/svc"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
 	"github.com/evolvermon/evolvermon/internal/middleware"
@@ -419,8 +421,8 @@ func (w *WmsAPI) writeBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.Stoc
 		}
 		// 序列号核销：先进先出标记出库（M2 v1）
 		for _, l := range order.Lines {
-			var mat model.Material
-			if err := tx.Scopes(data.ScopeFor(ac, false)).First(&mat, l.MaterialID).Error; err != nil || !mat.SerialManaged {
+			mat, merr := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
+			if merr != nil || !mat.SerialManaged {
 				continue
 			}
 			tx.Model(&model.SerialNumber{}).
@@ -469,8 +471,8 @@ func (w *WmsAPI) writeBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.Stoc
 			postedQty[pl.LineID] = postedQty[pl.LineID] + pl.Qty
 		}
 		for _, l := range order.Lines {
-			var mat model.Material
-			if err := tx.Scopes(data.ScopeFor(ac, false)).First(&mat, l.MaterialID).Error; err != nil || !mat.SerialManaged {
+			mat, merr := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
+			if merr != nil || !mat.SerialManaged {
 				continue
 			}
 			n := int(postedQty[l.ID])
