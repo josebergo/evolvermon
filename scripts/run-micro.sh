@@ -25,33 +25,56 @@ if [ "${EM_KEEP_DB:-0}" != "1" ]; then
   done
 fi
 
+CORE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon sslmode=disable TimeZone=Asia/Shanghai"
+CORE_API="http://127.0.0.1:8082" # core 域内部 API 基址（mono=8082 单进程；split 段覆盖为 8088 core-wms）
+export EM_CORE_URL="$CORE_API"   # integration/identity/master-data 继承
 cd backend
 rm -rf .pids
 wait_ready() { for i in $(seq 1 30); do curl -sf "$1" >/dev/null 2>&1 && return 0; sleep 1; done; echo "  ✗ $1 未就绪"; return 1; }
 
 echo "== 启动 identity（迁移+种子责任方，直启）=="
-EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_identity sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_CORE_URL="http://127.0.0.1:8082" ./identity.exe > .pids-identity.log 2>&1 &
+EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_identity sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_CORE_URL="$CORE_API" ./identity.exe > .pids-identity.log 2>&1 &
 wait_ready http://127.0.0.1:8081/readyz || { tail -3 .pids-identity.log; exit 1; }
 
 echo "== 启动 ops-admin + gateway（自不管辖） =="
 EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_ops sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8180" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" ./ops-admin.exe > .pids-ops-admin.log 2>&1 &
-EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_master sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8085" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" EM_CORE_URL="http://127.0.0.1:8082" ./master-data.exe > .pids-master-data.log 2>&1 &
-EM_MASTER_URL="http://127.0.0.1:8085" ./gateway.exe > .pids-gateway.log 2>&1 &
+EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_master sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8085" EM_INTERNAL_TOKEN="dev-internal-token" EM_IDENTITY_URL="http://127.0.0.1:8081" EM_CORE_URL="$CORE_API" ./master-data.exe > .pids-master-data.log 2>&1 &
 wait_ready http://127.0.0.1:8180/readyz
 wait_ready http://127.0.0.1:8085/readyz || { tail -3 .pids-master-data.log; exit 1; } || { tail -3 .pids-ops-admin.log; exit 1; }
+
+CORE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon sslmode=disable TimeZone=Asia/Shanghai"
+CORE_ENV_EXTRA="EM_IDENTITY_URL=http://127.0.0.1:8081 EM_INTERNAL_TOKEN=dev-internal-token EM_MASTER_URL=http://127.0.0.1:8085"
+if [ "${EM_TOPO:-mono}" = "split" ]; then
+  echo "== split 拓扑：core-erp/mes/wms 三进程 =="
+  go build -o core-erp.exe ./cmd/core-erp && go build -o core-mes.exe ./cmd/core-mes && go build -o core-wms.exe ./cmd/core-wms || exit 1
+  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8086" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-erp.exe > .pids-core-erp.log 2>&1 &
+  sleep 2
+  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8087" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-mes.exe > .pids-core-mes.log 2>&1 &
+  sleep 2
+  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8088" EM_MIGRATE=1 EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-wms.exe > .pids-core-wms.log 2>&1 &
+  # 网关分流三上游 + core 指向 core-wms（兜底/内部 API）
+  export EM_ERP_URL="http://127.0.0.1:8086" EM_MES_URL="http://127.0.0.1:8087" EM_WMS_URL="http://127.0.0.1:8088" EM_CORE_URL="http://127.0.0.1:8088"
+  TOPO_SERVICES=""  # 三进程已直启（registry 提供观测条目）
+else
+  TOPO_SERVICES="core"
+fi
+EM_MASTER_URL="http://127.0.0.1:8085" ./gateway.exe > .pids-gateway.log 2>&1 &
 wait_ready http://127.0.0.1:8080/healthz || { tail -3 .pids-gateway.log; exit 1; }
 
-echo "== 经管理平台启动 core/integration/scheduler =="
+echo "== 经管理平台启动 $TOPO_SERVICES/integration/scheduler =="
 AT=$(curl -s -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"Admin@123"}'   http://127.0.0.1:8080/api/v1/auth/login | python -c "import sys,json;print(json.load(sys.stdin)['data']['accessToken'])" 2>/dev/null)
 [ -n "$AT" ] || { echo "登录失败"; exit 1; }
-for s in master-data core integration scheduler; do
+for s in master-data $TOPO_SERVICES integration scheduler; do
   r=$(curl -s -X POST -H "Authorization: Bearer $AT" "http://127.0.0.1:8080/api/v1/ops/services/$s/start")
   echo "$r" | python -c "import sys,json;d=json.load(sys.stdin);raise SystemExit(0 if d.get('code')==0 else 1)"     && echo "  ✓ $s 已启动（经 ops-admin process driver）" || { echo "  ✗ $s 启动失败: $r"; exit 1; }
 done
 
 echo "== 等待业务服务就绪 =="
 ok=1
-for u in http://127.0.0.1:8081/readyz http://127.0.0.1:8082/readyz http://127.0.0.1:8083/readyz http://127.0.0.1:8084/readyz; do
+[ "$TOPO_SERVICES" != "core" ] && for u3 in http://127.0.0.1:8086/readyz http://127.0.0.1:8087/readyz http://127.0.0.1:8088/readyz; do wait_ready "$u3" || ok=0; done
+WAIT_URLS="http://127.0.0.1:8083/readyz http://127.0.0.1:8084/readyz"
+[ "${EM_TOPO:-mono}" != "split" ] && WAIT_URLS="http://127.0.0.1:8082/readyz $WAIT_URLS"
+for u in http://127.0.0.1:8081/readyz $WAIT_URLS; do
   wait_ready "$u" || ok=0
 done
 [ $ok = 1 ] && echo "拓扑就绪：master-data:8085 gateway:8080 identity:8081 core:8082 integration:8083 scheduler:8084 ops-admin:8180" || exit 1

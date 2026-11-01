@@ -31,13 +31,20 @@ var integrationPrefixes = []string{"webhooks", "webhook-deliveries", "devices", 
 // masterPrefixes 主数据域（Phase 2）：materials 等路由至 master-data 服务。
 var masterPrefixes = []string{"materials", "boms", "routings", "work-centers", "customers", "suppliers", "warehouses", "locations"}
 
+// erpPrefixes/mesPrefixes/wmsPrefixes core 三域细分（Phase 3 批2，EM_TOPO=split）：
+// 网关按域分流 core-erp/mes/wms；未配置 EM_ERP_URL 等时统一回落 core（单进程形态）。
+var erpPrefixes = []string{"sales-orders", "purchase-requests", "purchase-orders", "mrp"}
+var mesPrefixes = []string{"work-orders", "wo-operations", "production-reports", "qc-records", "qc-schemes", "defect-codes", "kanban", "dashboard", "trace", "print", "atp", "plan", "finance", "transfers", "group"}
+var wmsPrefixes = []string{"stocks", "stock-movements", "stock-orders", "stocktakings", "reservations"}
+
 type upstream struct {
 	name  string
 	proxy *httputil.ReverseProxy
 }
 
 type gateway struct {
-	identity, core, integration, ops, master *upstream
+	identity, core, integration, ops, master        *upstream
+	coreERP, coreMES, coreWMS                       *upstream // Phase 3 细分域（nil=回落 core）
 }
 
 func main() {
@@ -64,6 +71,15 @@ func main() {
 		integration: mk("integration", getenvDefault("EM_INTEGRATION_URL", "http://127.0.0.1:8083")),
 		ops:         mk("ops-admin", getenvDefault("EM_OPS_URL", "http://127.0.0.1:8180")),
 		master:      mk("master-data", getenvDefault("EM_MASTER_URL", "http://127.0.0.1:8085")),
+	}
+	if v := os.Getenv("EM_ERP_URL"); v != "" {
+		g.coreERP = mk("core-erp", v)
+	}
+	if v := os.Getenv("EM_MES_URL"); v != "" {
+		g.coreMES = mk("core-mes", v)
+	}
+	if v := os.Getenv("EM_WMS_URL"); v != "" {
+		g.coreWMS = mk("core-wms", v)
 	}
 
 	mux := http.NewServeMux()
@@ -107,6 +123,12 @@ func (g *gateway) pick(path string) *upstream {
 		return g.integration
 	case matchPrefix(rest, masterPrefixes):
 		return g.master
+	case g.coreERP != nil && matchPrefix(rest, erpPrefixes):
+		return g.coreERP
+	case g.coreMES != nil && matchPrefix(rest, mesPrefixes):
+		return g.coreMES
+	case g.coreWMS != nil && matchPrefix(rest, wmsPrefixes):
+		return g.coreWMS
 	case matchPrefix(rest, identityPrefixes):
 		return g.identity
 	default:

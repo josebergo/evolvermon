@@ -11,6 +11,6 @@ if [ -n "${AT:-}" ]; then
     curl -s -X POST -H "Authorization: Bearer $AT" "http://127.0.0.1:8080/api/v1/ops/services/$s/stop" >/dev/null 2>&1
   done
 fi
-for n in gateway ops-admin identity integration scheduler server master-data; do taskkill //IM $n.exe //F >/dev/null 2>&1; done
+for n in gateway ops-admin identity integration scheduler server master-data core-erp core-mes core-wms; do taskkill //IM $n.exe //F >/dev/null 2>&1; done
 rm -rf .pids .pids-*.log
 echo "micro 拓扑已停止"

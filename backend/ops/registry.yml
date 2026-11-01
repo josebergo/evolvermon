@@ -20,6 +20,15 @@ services:
       EM_MIGRATE: "0"
       EM_INTERNAL_TOKEN: "dev-internal-token"
       EM_IDENTITY_URL: "http://127.0.0.1:8081"
+  - name: core-erp
+    url: http://127.0.0.1:8086
+    driver: none
+  - name: core-mes
+    url: http://127.0.0.1:8087
+    driver: none
+  - name: core-wms
+    url: http://127.0.0.1:8088
+    driver: none
   - name: core
     url: http://127.0.0.1:8082
     driver: process
@@ -42,7 +51,6 @@ services:
       EM_HTTP_ADDR: ":8083"
       EM_MIGRATE: "1"
       EM_DATABASE_DSN: "host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_integration sslmode=disable TimeZone=Asia/Shanghai"
-      EM_CORE_URL: "http://127.0.0.1:8082"
   - name: scheduler
     url: http://127.0.0.1:8084
     driver: process

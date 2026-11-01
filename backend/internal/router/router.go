@@ -183,16 +183,15 @@ func New(db *gorm.DB, jm *jwtx.Manager, domains ...string) *gin.Engine {
 	if wants("master") {
 		registerMaster(v1, db)
 	}
-	if wants("core") { // core = erp+mes+wms（单进程）；细分域由 cmd/core-* 直配
-		if wantsDomainFor(domains, "erp") {
-			registerERP(v1, db)
-		}
-		if wantsDomainFor(domains, "mes") {
-			registerMES(v1, db)
-		}
-		if wantsDomainFor(domains, "wms") {
-			registerWMS(v1, db)
-		}
+	// core 三域：'core'/空=全注册（单进程）；细分 erp/mes/wms 由 cmd/core-* 直配
+	if wantsDomainFor(domains, "erp") {
+		registerERP(v1, db)
+	}
+	if wantsDomainFor(domains, "mes") {
+		registerMES(v1, db)
+	}
+	if wantsDomainFor(domains, "wms") {
+		registerWMS(v1, db)
 	}
 	if wants("integration") {
 		registerIntegration(v1, db)
