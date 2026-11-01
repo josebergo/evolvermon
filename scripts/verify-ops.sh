@@ -13,16 +13,16 @@ req()  { local m=$1 p=$2 d=${3:-}; if [ -n "$d" ]; then curl -s -X "$m" -H "Cont
 AT=$(curl -s -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"Admin@123"}' "$BASE/auth/login" | python -c "import sys,json;print(json.load(sys.stdin)['data']['accessToken'])")
 [ -n "$AT" ] && ok "登录（经网关→identity）" || { bad "登录失败"; exit 1; }
 
-# 等待健康轮询收敛（10s 周期；外部刚重启过服务时状态尚未刷新）
-for i in $(seq 1 25); do
-  st=$(curl -s -H "Authorization: Bearer $AT" "$BASE/ops/services" | python -c "import sys,json;d=json.load(sys.stdin)['data']['list'];print([x['status'] for x in d if x['name']=='integration'][0])" 2>/dev/null)
-  [ "$st" = "up" ] && break
+# 等待健康轮询收敛（10s 周期；等待全部受管服务 up，最多 45s）
+for i in $(seq 1 45); do
+  downs=$(curl -s -H "Authorization: Bearer $AT" "$BASE/ops/services" | python -c "import sys,json;d=json.load(sys.stdin)['data']['list'];print(','.join(x['name'] for x in d if x['name']!='gateway' and x['status']!='up'))" 2>/dev/null)
+  [ -z "$downs" ] && break
   sleep 1
 done
 
 say "服务注册与健康聚合"
 SVCS=$(req GET /ops/services)
-for s in gateway identity core integration scheduler; do
+for s in $(echo "$SVCS" | python -c "import sys,json;print(' '.join(x['name'] for x in json.load(sys.stdin)['data']['list'] if x['name']!='gateway'))"); do
   echo "$SVCS" | python -c "
 import sys,json
 d=json.load(sys.stdin)['data']['list']

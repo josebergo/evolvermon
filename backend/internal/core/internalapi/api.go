@@ -3,6 +3,7 @@
 package internalapi
 
 import (
+	"strings"
 	"time"
 	"net/http"
 	"os"
@@ -29,6 +30,11 @@ func (a *API) Register(r *gin.Engine) {
 	g.GET("/wms/reserved-sums", a.ReservedSums)
 	g.GET("/wms/stock-single", a.StockSingle)
 	g.GET("/wms/stockorder-todos", a.StockOrderTodos)
+	g.GET("/mes/wos", a.MesWorkOrders)
+	g.GET("/mes/wo-ops", a.MesWoOps)
+	g.GET("/mes/wo-counts", a.MesWoCounts)
+	g.GET("/mes/wip-sums", a.MesWipSums)
+	g.GET("/erp/order-counts", a.ErpOrderCounts)
 }
 
 func internalToken() gin.HandlerFunc {
@@ -176,6 +182,72 @@ func (a *API) StockOrderTodos(c *gin.Context) {
 	a.DB.Raw(`SELECT COUNT(*) FROM wms.stock_orders WHERE tenant_id=? AND factory_id=? AND status IN ('draft','doing') AND doc_type='rcv'`, tenantID, factoryID).Scan(&rcv)
 	a.DB.Raw(`SELECT COUNT(*) FROM wms.stock_orders WHERE tenant_id=? AND factory_id=? AND status IN ('draft','doing') AND doc_type='shp'`, tenantID, factoryID).Scan(&shp)
 	response.OK2(c, gin.H{"rcv": rcv, "shp": shp})
+}
+
+// MesWorkOrders 工单列表（erp 计划/MRP 经通道；statuses 逗号分隔可选）。
+func (a *API) MesWorkOrders(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	q := a.DB.Table("mes.work_orders").
+		Select("id, tenant_id, factory_id, doc_no, material_id, qty, good_qty, priority, plan_start_at, plan_end_at, status").
+		Where("tenant_id=? AND deleted_at IS NULL", tenantID)
+	if factoryID > 0 {
+		q = q.Where("factory_id=?", factoryID)
+	}
+	if st := c.Query("statuses"); st != "" {
+		q = q.Where("status IN ('" + strings.ReplaceAll(st, ",", "','") + "')")
+	}
+	var rows []map[string]any
+	q.Order("id").Limit(2000).Find(&rows)
+	response.OK2(c, gin.H{"list": rows})
+}
+
+// MesWoOps 工序列表（plan 排产/派工板）。
+func (a *API) MesWoOps(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	q := a.DB.Table("mes.wo_operations").
+		Select("id, work_order_id, work_center_id, seq, name, status, qty_ok, plan_start_at, plan_end_at, plan_hours").
+		Where("tenant_id=?", tenantID)
+	if factoryID > 0 {
+		q = q.Where("factory_id=?", factoryID)
+	}
+	if st := c.Query("statuses"); st != "" {
+		q = q.Where("status IN ('" + strings.ReplaceAll(st, ",", "','") + "')")
+	}
+	var rows []map[string]any
+	q.Order("id").Limit(5000).Find(&rows)
+	response.OK2(c, gin.H{"list": rows})
+}
+
+// MesWoCounts 工单活跃/超期计数（board）。
+func (a *API) MesWoCounts(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	var woActive, woOverdue int64
+	a.DB.Raw(`SELECT COUNT(*) FROM mes.work_orders WHERE tenant_id=? AND factory_id=? AND deleted_at IS NULL AND status IN ('released','running','paused')`, tenantID, factoryID).Scan(&woActive)
+	a.DB.Raw(`SELECT COUNT(*) FROM mes.work_orders WHERE tenant_id=? AND factory_id=? AND deleted_at IS NULL AND status IN ('released','running','paused') AND plan_end_at < now()`, tenantID, factoryID).Scan(&woOverdue)
+	response.OK2(c, gin.H{"woActive": woActive, "woOverdue": woOverdue})
+}
+
+// MesWipSums 按物料汇总在制剩余（mrp 供给计算）。
+func (a *API) MesWipSums(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	var rows []struct {
+		MaterialID int64   `json:"materialId"`
+		Qty        float64 `json:"qty"`
+	}
+	a.DB.Raw(`SELECT material_id, COALESCE(SUM(qty-good_qty),0) qty FROM mes.work_orders
+		WHERE tenant_id=? AND factory_id=? AND deleted_at IS NULL AND status IN ('released','running','paused','finished') GROUP BY material_id`, tenantID, factoryID).Scan(&rows)
+	response.OK2(c, gin.H{"list": rows})
+}
+
+// ErpOrderCounts 销售/采购待办计数（board）。
+func (a *API) ErpOrderCounts(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	var salesPending, poArriving, poOverdue int64
+	a.DB.Raw(`SELECT COUNT(*) FROM erp.sales_orders WHERE tenant_id=? AND factory_id=? AND deleted_at IS NULL AND status='draft'`, tenantID, factoryID).Scan(&salesPending)
+	a.DB.Raw(`SELECT COUNT(*) FROM erp.purchase_orders WHERE tenant_id=? AND factory_id=? AND deleted_at IS NULL AND status IN ('arriving','receiving')`, tenantID, factoryID).Scan(&poArriving)
+	a.DB.Raw(`SELECT COUNT(*) FROM erp.purchase_orders po WHERE po.tenant_id=? AND po.factory_id=? AND po.deleted_at IS NULL AND po.status IN ('arriving','receiving')
+		AND EXISTS (SELECT 1 FROM erp.purchase_order_lines l WHERE l.purchase_order_id=po.id AND l.delivery_date < now())`, tenantID, factoryID).Scan(&poOverdue)
+	response.OK2(c, gin.H{"salesPending": salesPending, "poArriving": poArriving, "poOverdue": poOverdue})
 }
 
 // FactoryCheck 工厂停用校验（identity 侧远程调用）：返回未结单据数，>0 禁止停用。

@@ -54,6 +54,8 @@ func main() {
 	outbox.StartRelay(db, in.Broker) // split 形态：core 域事件 relay 由 core-wms 承载（共享库单点）
 	client.InitDefaultMaster(db)
 	client.InitWMS(db)
+	client.InitCoreMes(db) // core 域间读通道（Local 直连）
+	client.InitCoreErp(db)
 
 	jm := jwtx.New(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTLHour, cfg.RefreshTTLDay)
 	r := router.New(db, jm, "wms")

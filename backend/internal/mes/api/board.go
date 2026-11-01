@@ -91,20 +91,18 @@ func (b *BoardAPI) DashboardSummary(c *gin.Context) {
 		QcPending     int64 `json:"qcPending"`
 		MaterialCount int64 `json:"materialCount"`
 	}
-	sc := data.ScopeFor(ac, true)
-	b.DB.Model(&model.SalesOrder{}).Scopes(sc).Where("status='draft'").Count(&counts.SalesPending)
-	b.DB.Model(&model.WorkOrder{}).Scopes(sc).Where("status IN ('released','running','paused')").Count(&counts.WoActive)
-	b.DB.Model(&model.WorkOrder{}).Scopes(sc).
-		Where("status IN ('released','running','paused') AND plan_end_at < now()").Count(&counts.WoOverdue)
-	b.DB.Model(&model.PurchaseOrder{}).Scopes(sc).Where("status IN ('arriving','receiving')").Count(&counts.PoArriving)
-	b.DB.Model(&model.PurchaseOrder{}).Scopes(sc).
-		Where("status IN ('arriving','receiving') AND EXISTS (SELECT 1 FROM erp.purchase_order_lines l WHERE l.purchase_order_id = purchase_orders.id AND l.delivery_date < now())").
-		Count(&counts.PoOverdue)
+	// 三库拆分：跨域计数走通道（erp 订单/mes 工单）
+	if sp, pa, po, e1 := client.ERP().OrderCounts(c.Request.Context(), ac.TenantID, ac.FactoryID); e1 == nil {
+		counts.SalesPending, counts.PoArriving, counts.PoOverdue = sp, pa, po
+	}
+	if wa, wo, e2 := client.MES().WoCounts(c.Request.Context(), ac.TenantID, ac.FactoryID); e2 == nil {
+		counts.WoActive, counts.WoOverdue = wa, wo
+	}
 	rcvTodo, _, _ := client.WMS().StockOrderTodos(c.Request.Context(), ac.TenantID, ac.FactoryID)
 	counts.RcvTodo = rcvTodo
 	_, shpTodo, _ := client.WMS().StockOrderTodos(c.Request.Context(), ac.TenantID, ac.FactoryID)
 	counts.ShpTodo = shpTodo
-	b.DB.Model(&model.QcRecord{}).Scopes(sc).Where("result='pending'").Count(&counts.QcPending)
+	b.DB.Model(&model.QcRecord{}).Where("tenant_id=? AND factory_id=? AND result='pending'", ac.TenantID, ac.FactoryID).Count(&counts.QcPending)
 	counts.MaterialCount, _ = client.M().CountMaterials(c.Request.Context(), ac.TenantID)
 
 	// 安全库存预警（master 分库拆解：物料走通道，库存 core 直查，Go 合并）

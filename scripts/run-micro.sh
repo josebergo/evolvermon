@@ -28,6 +28,33 @@ fi
 CORE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon sslmode=disable TimeZone=Asia/Shanghai"
 CORE_API="http://127.0.0.1:8082" # core 域内部 API 基址（mono=8082 单进程；split 段覆盖为 8088 core-wms）
 export EM_CORE_URL="$CORE_API"   # integration/identity/master-data 继承
+# 拓扑判定前置（identity/master-data 的 EM_CORE_URL 依赖）：split 时 core 域 API 归 core-wms
+if [ "${EM_TOPO:-mono}" = "split" ]; then
+  CORE_API="http://127.0.0.1:8088"
+  export EM_CORE_URL="$CORE_API"
+fi
+# 运行时 registry：split 时删 core 单进程条目（三进程条目观测），mono 时 core url 指向 CORE_API
+CORE_API_ENV="$CORE_API" EM_TOPO_ENV="${EM_TOPO:-mono}" python <<'PYRGX'
+import io, os
+core_api, topo = os.environ['CORE_API_ENV'], os.environ['EM_TOPO_ENV']
+drop = ['core'] if topo == 'split' else ['core-erp', 'core-mes', 'core-wms']
+lines = io.open('backend/ops/registry.yml', encoding='utf-8', newline='').readlines()
+out, skip = [], False
+for l in lines:
+    t = l.strip()
+    if any(t == '- name: ' + d for d in drop):
+        skip = True
+        continue
+    if skip and t.startswith('- name:'):
+        skip = False
+    if not skip:
+        out.append(l)
+s = ''.join(out)
+if topo != 'split':
+    s = s.replace('url: http://127.0.0.1:8082', 'url: ' + core_api, 1)
+io.open('backend/ops/registry.runtime.yml', 'w', encoding='utf-8', newline='').write(s)
+PYRGX
+export EM_REGISTRY_PATH="ops/registry.runtime.yml"  # ops-admin cwd=backend
 cd backend
 rm -rf .pids
 wait_ready() { for i in $(seq 1 30); do curl -sf "$1" >/dev/null 2>&1 && return 0; sleep 1; done; echo "  ✗ $1 未就绪"; return 1; }
@@ -47,11 +74,11 @@ CORE_ENV_EXTRA="EM_IDENTITY_URL=http://127.0.0.1:8081 EM_INTERNAL_TOKEN=dev-inte
 if [ "${EM_TOPO:-mono}" = "split" ]; then
   echo "== split 拓扑：core-erp/mes/wms 三进程 =="
   go build -o core-erp.exe ./cmd/core-erp && go build -o core-mes.exe ./cmd/core-mes && go build -o core-wms.exe ./cmd/core-wms || exit 1
-  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8086" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-erp.exe > .pids-core-erp.log 2>&1 &
+  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8086" EM_MES_URL="http://127.0.0.1:8087" EM_WMS_URL="http://127.0.0.1:8088" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-erp.exe > .pids-core-erp.log 2>&1 &
   sleep 2
-  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8087" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-mes.exe > .pids-core-mes.log 2>&1 &
+  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8087" EM_ERP_URL="http://127.0.0.1:8086" EM_WMS_URL="http://127.0.0.1:8088" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-mes.exe > .pids-core-mes.log 2>&1 &
   sleep 2
-  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8088" EM_MIGRATE=1 EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-wms.exe > .pids-core-wms.log 2>&1 &
+  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8088" EM_ERP_URL="http://127.0.0.1:8086" EM_MES_URL="http://127.0.0.1:8087" EM_MIGRATE=1 EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-wms.exe > .pids-core-wms.log 2>&1 &
   # 网关分流三上游 + core 指向 core-wms（兜底/内部 API）
   export EM_ERP_URL="http://127.0.0.1:8086" EM_MES_URL="http://127.0.0.1:8087" EM_WMS_URL="http://127.0.0.1:8088" EM_CORE_URL="http://127.0.0.1:8088"
   TOPO_SERVICES=""  # 三进程已直启（registry 提供观测条目）

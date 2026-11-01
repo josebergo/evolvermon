@@ -65,19 +65,13 @@ func (m *MrpAPI) Run(c *gin.Context) {
 	var pos []model.PurchaseOrder
 	m.DB.Scopes(data.ScopeFor(ac, true)).Preload("Lines").
 		Where("status IN ('arriving','receiving')").Find(&pos)
-	// 在制：未完工工单产出
-	var wos []model.WorkOrder
-	m.DB.Scopes(data.ScopeFor(ac, true)).
-		Where("status IN ('released','running','paused','finished')").Find(&wos)
+	// 在制：未完工工单产出（mes 域经通道；三库拆分后唯一路径）
 
 	supply := map[int64]float64{} // 在途(采购未入库) + 在制(工单未产出)
 	for _, po := range pos {
 		for _, l := range po.Lines {
 			supply[l.MaterialID] += max(l.Qty-l.ReceivedQty, 0)
 		}
-	}
-	for _, wo := range wos {
-		supply[wo.MaterialID] += max(wo.Qty-wo.GoodQty, 0)
 	}
 
 	// 毛需求：已审核销售订单（未发完部分）

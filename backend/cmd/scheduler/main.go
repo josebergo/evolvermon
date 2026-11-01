@@ -44,6 +44,8 @@ func main() {
 
 	client.InitDefaultMaster(db) // 主数据读通道默认装配（Lite=Local 直连）
 	client.InitWMS(db) // core-wms 读通道（Lite=Local 直连）
+	client.InitCoreMes(db) // core 域间读通道（Local 直连）
+	client.InitCoreErp(db)
 
 	in, err := infra.Open(infra.Options{Broker: cfg.Broker, BrokerURL: cfg.BrokerURL, Cache: cfg.Cache, CacheURL: cfg.CacheURL})
 	if err != nil {
