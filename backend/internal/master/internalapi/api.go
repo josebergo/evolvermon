@@ -110,6 +110,7 @@ func (a *API) Register(r *gin.Engine) {
 	g.GET("/partner", a.Partner)
 	g.GET("/warehouse", a.Warehouse)
 	g.GET("/warehouses-by-type", a.WarehousesByType)
+	g.GET("/location", a.Location)
 }
 
 // internalToken 服务间令牌（EM_INTERNAL_TOKEN，各服务配置一致；fail-fast：未配置拒绝）。
@@ -242,6 +243,21 @@ func (a *API) WarehousesByType(c *gin.Context) {
 		rows = []WhLite{}
 	}
 	response.OK2(c, gin.H{"list": rows})
+}
+
+// LocLite 货位精简视图。
+type LocLite struct {
+	ID          int64  `json:"id"`
+	WarehouseID int64  `json:"warehouseId"`
+	Code        string `json:"code"`
+	Frozen      bool   `json:"frozen"`
+}
+
+// Location 单货位。
+func (a *API) Location(c *gin.Context) {
+	var w LocLite
+	a.DB.Raw(`SELECT id, warehouse_id, code, frozen FROM master.locations WHERE id=? AND deleted_at IS NULL`, queryInt64(c, "id")).Scan(&w)
+	response.OK2(c, gin.H{"value": w})
 }
 
 func queryInt64(c *gin.Context, k string) int64 {

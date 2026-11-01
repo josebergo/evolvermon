@@ -67,8 +67,8 @@ func (q *QualityAPI) Dispose(c *gin.Context) {
 		response.OK2(c, gin.H{"reworkWorkOrder": wo.DocNo, "woId": wo.ID})
 	case "scrap":
 		// 报废：可用仓 → 不良品仓 移库草稿（仓管确认过账）
-		var whDef model.Warehouse
-		if err := q.DB.Scopes(data.ScopeFor(ac, true)).Where("type='defective'").First(&whDef).Error; err != nil {
+		whDef, derr := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "defective")
+		if derr != nil {
 			response.Fail(c, response.NewBiz(response.ErrBiz, "未配置不良品仓"))
 			return
 		}

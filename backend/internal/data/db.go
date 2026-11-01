@@ -48,10 +48,6 @@ func MigrateProfile(db *gorm.DB, profile string) error {
 		)
 	case "core":
 		return db.AutoMigrate(
-			// 主数据 + 核心交易（master 库下一批拆出，暂随 core 库）
-			&model.Material{}, &model.Bom{}, &model.BomLine{}, &model.Routing{}, &model.RoutingOp{},
-			&model.WorkCenter{}, &model.Customer{}, &model.Supplier{},
-			&model.Warehouse{}, &model.Location{}, // 仓区随 core 库（master 下一批拆出）
 			&model.SalesOrder{}, &model.SalesOrderLine{}, &model.PurchaseRequest{}, &model.PurchaseRequestLine{},
 			&model.PurchaseOrder{}, &model.PurchaseOrderLine{}, &model.WorkOrder{}, &model.WoOperation{},
 			&model.ProductionReport{}, &model.DefectCode{}, &model.QcScheme{}, &model.QcRecord{},

@@ -15,6 +15,7 @@ import (
 	mapi "github.com/evolvermon/evolvermon/internal/master/internalapi"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
 	"github.com/evolvermon/evolvermon/internal/pkg/logx"
+	"github.com/evolvermon/evolvermon/seed"
 	"github.com/evolvermon/evolvermon/internal/router"
 )
 
@@ -35,8 +36,13 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		if _, err := data.MigrateVersioned(db); err != nil {
+		if _, err := data.MigrateVersioned(db, "master"); err != nil {
 			log.Fatalf("migrate failed: %v", err)
+		}
+		if cfg.SeedDemo {
+			if err := seed.RunMasterDemo(db); err != nil { // master 库种子
+				log.Printf("seed master demo failed (non-fatal): %v", err)
+			}
 		}
 	}
 	in, err := infra.Open(infra.Options{Broker: cfg.Broker, BrokerURL: cfg.BrokerURL, Cache: cfg.Cache, CacheURL: cfg.CacheURL})

@@ -3,6 +3,7 @@ package api
 // M5：厂间调拨（一步完成：调出厂扣账 → 在途流水 → 调入厂入账，双单据留痕）+ 集团视图。
 
 import (
+	"context"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"time"
@@ -47,13 +48,12 @@ func (t *TransferAPI) Create(c *gin.Context) {
 		return
 	}
 	// 两厂仓库：调出=物料默认可用仓（原料仓兜底）；调入=同类型仓
-	whOf := func(factoryID int64, kind string) (*model.Warehouse, error) {
-		var wh model.Warehouse
-		q := t.DB.Where("tenant_id=? AND factory_id=? AND status=1", ac.TenantID, factoryID)
-		if err := q.Where("type=?", kind).First(&wh).Error; err != nil {
+	whOf := func(factoryID int64, kind string) (*client.WhLite, error) {
+		w, err := client.WhByType(c.Request.Context(), ac.TenantID, factoryID, kind)
+		if err != nil {
 			return nil, fmt.Errorf("工厂 %d 未配置 %s 仓", factoryID, kind)
 		}
-		return &wh, nil
+		return &w, nil
 	}
 	kind := "raw"
 	if mat.Category == string(model.MatFinish) {
@@ -201,7 +201,18 @@ func (t *TransferAPI) GroupSummary(c *gin.Context) {
 		t.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('released','running','paused')", ac.TenantID, f.ID).Count(&r.WoActive)
 		t.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('released','running','paused') AND plan_end_at < now()", ac.TenantID, f.ID).Count(&r.WoOverdue)
 		t.DB.Raw(`SELECT COALESCE(SUM(qty_ok),0) FROM mes.production_reports WHERE factory_id=? AND reported_at >= current_date`, f.ID).Scan(&r.TodayOk)
-		t.DB.Raw(`SELECT COALESCE(SUM(s.qty_on_hand * m.price),0) FROM wms.stocks s JOIN master.materials m ON m.id=s.material_id WHERE s.factory_id=?`, f.ID).Scan(&r.StockValue)
+		{ // master 分库拆解：库存金额 = Σ(库存量 × 物料价[通道快照])
+			var svRows []struct {
+				MaterialID int64
+				Qty        float64
+			}
+			t.DB.Raw(`SELECT material_id, SUM(qty_on_hand) qty FROM wms.stocks WHERE factory_id=? GROUP BY material_id`, f.ID).Scan(&svRows)
+			if matMap, mpe := client.M().MaterialMap(context.Background(), ac.TenantID); mpe == nil {
+				for _, sv := range svRows {
+					r.StockValue += sv.Qty * matMap[sv.MaterialID].Price
+				}
+			}
+		}
 		t.DB.Model(&model.StockOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('draft','doing')", ac.TenantID, f.ID).Count(&r.PendingDocs)
 		rows = append(rows, r)
 	}

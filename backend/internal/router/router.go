@@ -423,6 +423,17 @@ func registerMaster(v1 *gin.RouterGroup, db *gorm.DB) {
 		// FR-ERP-004：存在未完结单据禁止停用
 		BeforeUpdate: func(db *gorm.DB, ac *middleware.AuthCtx, obj *model.Material, old *model.Material) error {
 			if obj.Status == 0 && old.Status == 1 {
+				// master 分库：core 单据表经 /internal/core/material-check（Lite 直查回退）
+				if coreURL := os.Getenv("EM_CORE_URL"); coreURL != "" {
+					open, err := client.MaterialCheck(coreURL, os.Getenv("EM_INTERNAL_TOKEN"), ac.TenantID, old.ID)
+					if err != nil {
+						return err
+					}
+					if open > 0 {
+						return response.NewBiz(response.ErrBiz, fmt.Sprintf("物料存在未完结单据 %d，禁止停用", open))
+					}
+					return nil
+				}
 				var so, po, wo int64
 				db.Raw(`SELECT COUNT(*) FROM erp.sales_order_lines l JOIN erp.sales_orders o ON o.id=l.sales_order_id
 					WHERE l.material_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, old.ID).Scan(&so)

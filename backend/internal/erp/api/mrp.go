@@ -39,12 +39,12 @@ func (m *MrpAPI) Run(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 
-	var materials []model.Material
-	mq := m.DB.Scopes(data.ScopeFor(ac, false))
-	if len(req.MaterialIDs) > 0 {
-		mq = mq.Where("id IN ?", req.MaterialIDs)
+	// master 分库：物料经通道（全量或按 ids；Remote 无缓存实读）
+	materials, merr := client.M().Materials(c.Request.Context(), ac.TenantID, req.MaterialIDs)
+	if merr != nil {
+		response.Fail(c, merr)
+		return
 	}
-	mq.Find(&materials)
 
 	// 可用量（现有 − held 预占，下限 0：预占超出现有时不应放大净需求）
 	onHand := map[int64]float64{}
@@ -116,7 +116,7 @@ func (m *MrpAPI) Run(c *gin.Context) {
 		}
 	}
 
-	matByID := map[int64]model.Material{}
+	matByID := map[int64]client.MaterialLite{}
 	for _, mt := range materials {
 		matByID[mt.ID] = mt
 	}
@@ -166,7 +166,7 @@ func (m *MrpAPI) Run(c *gin.Context) {
 				return
 			}
 			st := "buy"
-			if mat.SourceType == model.SrcMake {
+			if mat.SourceType == string(model.SrcMake) {
 				st = "make"
 			}
 			suggestions = append(suggestions, MrpSuggestion{

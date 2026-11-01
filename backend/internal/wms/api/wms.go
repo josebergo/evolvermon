@@ -190,8 +190,8 @@ func (w *WmsAPI) PostLines(c *gin.Context) {
 			if batch == "" {
 				batch = line.BatchNo
 			}
-			var mat model.Material
-			if err := tx.Where("tenant_id=?", ac.TenantID).First(&mat, line.MaterialID).Error; err != nil {
+			mat, merr := client.MatRef(context.Background(), ac.TenantID, line.MaterialID)
+			if merr != nil {
 				return response.NewBiz(response.ErrBiz, "物料不存在")
 			}
 			var toLoc *int64 = pl.LocationID
@@ -354,9 +354,8 @@ func (w *WmsAPI) applyStockAt(tx *gorm.DB, ac *middleware.AuthCtx, order model.S
 	// 唯一维度行锁定或创建（数据库设计 §6：表达式唯一索引）
 	// FR-WMS-033：货位冻结禁止过账
 	if loc != nil {
-		var l model.Location
-		if err := tx.First(&l, *loc).Error; err == nil && l.Frozen {
-			return response.NewBiz(response.ErrBiz, "货位 "+l.Code+" 已冻结，禁止过账")
+	if l2, lerr := client.LocationRef(context.Background(), *loc); lerr == nil && l2.Frozen {
+			return response.NewBiz(response.ErrBiz, "货位 "+l2.Code+" 已冻结，禁止过账")
 		}
 	}
 	var stock model.Stock

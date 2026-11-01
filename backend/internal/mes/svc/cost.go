@@ -37,8 +37,7 @@ func CostWorkOrder(tx *gorm.DB, ac *middleware.AuthCtx, woID int64) (float64, er
 		opWC[op.ID] = op.WorkCenterID
 	}
 	wcRate := map[int64]float64{}
-	var wcs []model.WorkCenter
-	tx.Scopes(data.ScopeFor(ac, true)).Find(&wcs)
+	wcs, _ := client.M().WorkCenters(context.Background(), ac.TenantID)
 	for _, w := range wcs {
 		wcRate[w.ID] = w.CostRate
 	}

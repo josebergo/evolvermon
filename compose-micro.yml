@@ -61,14 +61,17 @@ services:
       retries: 12
     restart: unless-stopped
 
-  master-data: # 主数据域（Phase 2）：CRUD + /internal/master/* 批量读
+  master-data: # 主数据域（Phase 2）：CRUD + /internal/master/* 批量读（独立 master 库）
     build: ./backend
     command: ["./master-data"]
     environment:
       <<: *svc_env
+      EM_DATABASE_DSN: "host=db port=5432 user=evolver password=evolver_pass_change_me dbname=evolvermon_master sslmode=disable TimeZone=Asia/Shanghai"
       EM_HTTP_ADDR: ":8085"
-      EM_MIGRATE: "0"
+      EM_MIGRATE: "1"
       EM_INTERNAL_TOKEN: "change-me-internal-token"
+      EM_IDENTITY_URL: "http://identity:8081"
+      EM_CORE_URL: "http://core:8082"
     depends_on:
       identity:
         condition: service_healthy

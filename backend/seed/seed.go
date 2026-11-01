@@ -74,6 +74,24 @@ func RunPlatform(db *gorm.DB) error { return runPlatform(db) }
 // RunCoreDemo core 库演示数据种子（分库形态）：master/mes 表（假定演示租户/工厂已在 identity 库建立，ID=1/2）。
 func RunCoreDemo(db *gorm.DB) error { return seedCorePart(db, 1) }
 
+// RunMasterDemo master 库种子（分库形态）：仓库 + 物料/BOM/工艺/工作中心/客商。
+func RunMasterDemo(db *gorm.DB) error {
+	if err := seedWarehouses(db, 1); err != nil {
+		return err
+	}
+	seedMasterDemo(db, 1)
+	return nil
+}
+
+// RunCoreSplit 分库形态 core 库种子（不建 master 表）：IQC 方案/期初库存/不良字典。
+// byCode=master 库自增固定映射（FG1/SF2/RM-3001..3004=3..6），DG-RAW=1。
+func RunCoreSplit(db *gorm.DB) error {
+	byCode := map[string]int64{"FG-1000": 1, "SF-2000": 2, "RM-3001": 3, "RM-3002": 4, "RM-3003": 5, "RM-3004": 6}
+	seedCoreStock(db, 1, byCode, 1)
+	seedDict(db, 1)
+	return nil
+}
+
 func Run(db *gorm.DB) error { // Lite：platform + core 演示数据
 	if err := runPlatform(db); err != nil {
 		return err
@@ -220,29 +238,21 @@ func seedPlatformPart(db *gorm.DB, tenantID int64) error {
 
 // seedCorePart core 库种子（master/mes 表）：仓库/演示主数据/不良字典。工厂 ID 为逻辑引用（identity 库自增 1/2）。
 func seedCorePart(db *gorm.DB, tenantID int64) error {
-	dg := model.Factory{ID: 1, Code: "DG"}
-	sz := model.Factory{ID: 2, Code: "SZ"}
-	for _, f := range []model.Factory{dg, sz} {
-		for _, w := range []model.Warehouse{
-			{Code: f.Code + "-RAW", Name: f.Name + "·原料仓", Type: model.WhRaw, Status: 1},
-			{Code: f.Code + "-FG", Name: f.Name + "·成品仓", Type: model.WhFG, Status: 1},
-			{Code: f.Code + "-SEMI", Name: f.Name + "·半成品仓", Type: model.WhSemi, Status: 1},
-			{Code: f.Code + "-DEF", Name: f.Name + "·不良品仓", Type: model.WhDefect, Status: 1},
-		} {
-			w.TenantID, w.FactoryID = tenantID, &f.ID
-			db.Create(&w)
-		}
+	if err := seedWarehouses(db, tenantID); err != nil {
+		return err
 	}
-	seedDemoMaster(db, tenantID, &dg)
+	byCode := seedMasterDemo(db, tenantID)
+	seedCoreStock(db, tenantID, byCode, 1)
 	seedDict(db, tenantID)
 	return nil
 }
 
-func seedDemoMaster(db *gorm.DB, tenantID int64, f *model.Factory) {
+func seedMasterDemo(db *gorm.DB, tenantID int64) map[string]int64 {
 	var cnt int64
 	db.Model(&model.Material{}).Where("tenant_id=?", tenantID).Count(&cnt)
+	factoryID := int64(1)
 	if cnt > 0 {
-		return
+		return nil // 幂等：已存在（分库形态 byCode 由固定映射兜底）
 	}
 	mats := []model.Material{
 		{Code: "FG-1000", Name: "智能温控器 V2", Spec: "220V/16A", Category: model.MatFinish, Unit: "台", SourceType: model.SrcMake, BatchManaged: true, SerialManaged: true, SafetyStock: 50, Price: 129, LeadTimeDays: 3, Status: 1},
@@ -281,7 +291,7 @@ func seedDemoMaster(db *gorm.DB, tenantID int64, f *model.Factory) {
 	}
 	for i := range wcs {
 		wcs[i].TenantID = tenantID
-		wcs[i].FactoryID = &f.ID
+		wcs[i].FactoryID = &factoryID
 		db.Create(&wcs[i])
 	}
 	rtSF := model.Routing{MaterialID: byCode["SF-2000"], VersionNo: "A", Status: model.BomActive}
@@ -296,11 +306,6 @@ func seedDemoMaster(db *gorm.DB, tenantID int64, f *model.Factory) {
 	db.Create(&model.RoutingOp{RoutingID: rtFG.ID, Seq: 20, Name: "整机测试", WorkCenterID: wcs[2].ID, PrepTimeSec: 300, RunTimePerUnitSec: 30})
 	db.Create(&model.RoutingOp{RoutingID: rtFG.ID, Seq: 30, Name: "包装", WorkCenterID: wcs[1].ID, PrepTimeSec: 120, RunTimePerUnitSec: 20})
 
-	// IQC 检验方案（RM-3001 全检）：触发采购到货「待检量隔离」演示路径
-	qcScheme := model.QcScheme{MaterialID: byCode["RM-3001"], CheckType: model.QcIQC, SampleRatio: 1,
-		Items: `[{"name":"外观","std":"无划伤","method":"目视"},{"name":"尺寸","std":"1.6±0.1mm","method":"卡尺"}]`}
-	qcScheme.TenantID = tenantID
-	db.Create(&qcScheme)
 
 	// 客商
 	cust := model.Customer{Code: "C0001", Name: "深圳智联家电", Contact: "张经理", Phone: "13900000001", CreditLimit: 200000, Status: 1}
@@ -309,32 +314,8 @@ func seedDemoMaster(db *gorm.DB, tenantID int64, f *model.Factory) {
 	db.Create(&cust)
 	db.Create(&supp)
 
-	// 初始库存（模拟已有原料库存）
-	var whRaw model.Warehouse
-	db.Where("tenant_id=? AND factory_id=? AND type='raw'", tenantID, f.ID).First(&whRaw)
-	initStock := []struct {
-		mat  string
-		qty  float64
-		batch string
-	}{
-		{"RM-3001", 500, "B20261001"},
-		{"RM-3002", 800, ""},
-		{"RM-3003", 300, "B20261002"},
-		{"RM-3004", 2000, ""},
-	}
-	for _, s := range initStock {
-		st := model.Stock{
-			TenantID: tenantID, FactoryID: f.ID, WarehouseID: whRaw.ID,
-			MaterialID: byCode[s.mat], BatchNo: s.batch, QtyOnHand: s.qty,
-		}
-		db.Create(&st)
-		db.Create(&model.StockMovement{
-			TenantID: tenantID, FactoryID: f.ID, WarehouseID: whRaw.ID, MaterialID: byCode[s.mat],
-			BatchNo: s.batch, Direction: model.MoveIn, Qty: s.qty, BizType: "期初导入",
-			BeforeQty: 0, AfterQty: s.qty, OpUserID: 0, CreatedAt: time.Now(),
-		})
-	}
 	log.Printf("[seed] demo master data created for tenant %d", tenantID)
+	return byCode
 }
 
 func seedDict(db *gorm.DB, tenantID int64) {
@@ -353,4 +334,56 @@ func seedDict(db *gorm.DB, tenantID int64) {
 			db.Create(&d)
 		}
 	}
+}
+
+// seedCoreStock core 库种子：IQC 方案（mes）+ 期初库存（wms）。
+// master 分库后：byCode 为映射（Lite=真实值/master 分库=演示固定值），原料仓固定 DG-RAW=1。
+func seedCoreStock(db *gorm.DB, tenantID int64, byCode map[string]int64, factoryID int64) {
+	// IQC 检验方案（RM-3001 全检）：触发采购到货「待检量隔离」演示路径
+	qcScheme := model.QcScheme{MaterialID: byCode["RM-3001"], CheckType: model.QcIQC, SampleRatio: 1,
+		Items: `[{"name":"外观","std":"无划伤","method":"目视"},{"name":"尺寸","std":"1.6±0.1mm","method":"卡尺"}]`}
+	qcScheme.TenantID = tenantID
+	db.Create(&qcScheme)
+	// 初始库存（模拟已有原料库存）
+	whRawID := int64(1) // DG-RAW（master 库自增假定）
+	initStock := []struct {
+		mat  string
+		qty  float64
+		batch string
+	}{
+		{"RM-3001", 500, "B20261001"},
+		{"RM-3002", 800, ""},
+		{"RM-3003", 300, "B20261002"},
+		{"RM-3004", 2000, ""},
+	}
+	for _, s := range initStock {
+		st := model.Stock{
+			TenantID: tenantID, FactoryID: factoryID, WarehouseID: whRawID,
+			MaterialID: byCode[s.mat], BatchNo: s.batch, QtyOnHand: s.qty,
+		}
+		db.Create(&st)
+		db.Create(&model.StockMovement{
+			TenantID: tenantID, FactoryID: factoryID, WarehouseID: whRawID, MaterialID: byCode[s.mat],
+			BatchNo: s.batch, Direction: model.MoveIn, Qty: s.qty, BizType: "期初导入",
+			BeforeQty: 0, AfterQty: s.qty, OpUserID: 0, CreatedAt: time.Now(),
+		})
+	}
+}
+
+// seedWarehouses master 库仓库种子（两厂×4 仓；工厂 ID 为 identity 库逻辑引用 1/2）。
+func seedWarehouses(db *gorm.DB, tenantID int64) error {
+	dg := model.Factory{ID: 1, Code: "DG"}
+	sz := model.Factory{ID: 2, Code: "SZ"}
+	for _, f := range []model.Factory{dg, sz} {
+		for _, w := range []model.Warehouse{
+			{Code: f.Code + "-RAW", Name: f.Name + "·原料仓", Type: model.WhRaw, Status: 1},
+			{Code: f.Code + "-FG", Name: f.Name + "·成品仓", Type: model.WhFG, Status: 1},
+			{Code: f.Code + "-SEMI", Name: f.Name + "·半成品仓", Type: model.WhSemi, Status: 1},
+			{Code: f.Code + "-DEF", Name: f.Name + "·不良品仓", Type: model.WhDefect, Status: 1},
+		} {
+			w.TenantID, w.FactoryID = tenantID, &f.ID
+			db.Create(&w)
+		}
+	}
+	return nil
 }

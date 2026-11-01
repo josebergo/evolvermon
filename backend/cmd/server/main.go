@@ -74,7 +74,7 @@ func main() {
 			}
 		}
 		if roles == "core" {
-			if err := seed.RunCoreDemo(db); err != nil { // 分库形态：core 库演示主数据
+			if err := seed.RunCoreSplit(db); err != nil { // 分库形态：core 库演示主数据
 				log.Printf("seed core demo failed (non-fatal): %v", err)
 			}
 		}

@@ -189,8 +189,11 @@ func (p *PlanAPI) Schedule(c *gin.Context) {
 // Gantt 甘特数据：按工作中心分组。
 func (p *PlanAPI) Gantt(c *gin.Context) {
 	ac := middleware.GetAuth(c)
-	var wcs []model.WorkCenter
-	p.DB.Scopes(data.ScopeFor(ac, true)).Where("status=1").Find(&wcs)
+	wcs, werr := client.M().WorkCenters(c.Request.Context(), ac.TenantID)
+	if werr != nil {
+		response.Fail(c, werr)
+		return
+	}
 	var wos []model.WorkOrder
 	p.DB.Scopes(data.ScopeFor(ac, true)).Where("status IN ('released','running')").Find(&wos)
 	woBy := map[int64]model.WorkOrder{}

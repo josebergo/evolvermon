@@ -45,6 +45,7 @@ type MasterData interface {
 	BomOf(ctx context.Context, tenantID, bomID, materialID int64) (*mapi.BomDTO, error)
 	Partner(ctx context.Context, tenantID int64, kind string, id int64) (*mapi.PartnerLite, error)
 	Warehouse(ctx context.Context, id int64) (*mapi.WhLite, error)
+	Location(ctx context.Context, id int64) (*mapi.LocLite, error)
 	WarehousesByType(ctx context.Context, tenantID, factoryID int64, whType string) ([]mapi.WhLite, error)
 	CountMaterials(ctx context.Context, tenantID int64) (int64, error)
 }
@@ -143,6 +144,15 @@ func (l *localMaster) WarehousesByType(_ context.Context, tenantID, factoryID in
 	err := l.db.Raw(`SELECT id, tenant_id, factory_id, code, name, type, status FROM master.warehouses
 		WHERE tenant_id=? AND factory_id=? AND type=? AND status=1 AND deleted_at IS NULL ORDER BY id LIMIT 1`, tenantID, factoryID, whType).Scan(&rows).Error
 	return rows, err
+}
+
+func (l *localMaster) Location(_ context.Context, id int64) (*mapi.LocLite, error) {
+	var w mapi.LocLite
+	err := l.db.Raw(`SELECT id, warehouse_id, code, frozen FROM master.locations WHERE id=? AND deleted_at IS NULL`, id).Scan(&w).Error
+	if w.ID == 0 {
+		return nil, err
+	}
+	return &w, nil
 }
 
 func (l *localMaster) CountMaterials(_ context.Context, tenantID int64) (int64, error) {
@@ -358,6 +368,21 @@ func (r *remoteMaster) WarehousesByType(ctx context.Context, tenantID, factoryID
 	return out.Data.List, nil
 }
 
+func (r *remoteMaster) Location(ctx context.Context, id int64) (*mapi.LocLite, error) {
+	var out struct {
+		Data struct {
+			Value mapi.LocLite `json:"value"`
+		} `json:"data"`
+	}
+	if err := r.get(ctx, fmt.Sprintf("/internal/master/location?id=%d", id), &out); err != nil {
+		return nil, err
+	}
+	if out.Data.Value.ID == 0 {
+		return nil, nil
+	}
+	return &out.Data.Value, nil
+}
+
 func (r *remoteMaster) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+path, nil)
 	if err != nil {
@@ -472,4 +497,19 @@ func WhByType(ctx context.Context, tenantID, factoryID int64, whType string) (Wh
 		return WhLite{}, ErrNotFound
 	}
 	return rows[0], nil
+}
+
+// LocLite 货位精简视图。
+type LocLite = mapi.LocLite
+
+// LocationRef 单货位（冻结校验高频路径；Remote 走端点）。
+func LocationRef(ctx context.Context, id int64) (LocLite, error) {
+	l, err := M().Location(ctx, id)
+	if err != nil {
+		return LocLite{}, err
+	}
+	if l == nil {
+		return LocLite{}, ErrNotFound
+	}
+	return *l, nil
 }
