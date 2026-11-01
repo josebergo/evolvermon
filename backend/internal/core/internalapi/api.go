@@ -25,6 +25,10 @@ func (a *API) Register(r *gin.Engine) {
 	g.GET("/factory-check", a.FactoryCheck)
 	g.GET("/material-check", a.MaterialCheck)
 	g.GET("/insights", a.Insights)
+	g.GET("/wms/stock-sums", a.StockSums)
+	g.GET("/wms/reserved-sums", a.ReservedSums)
+	g.GET("/wms/stock-single", a.StockSingle)
+	g.GET("/wms/stockorder-todos", a.StockOrderTodos)
 }
 
 func internalToken() gin.HandlerFunc {
@@ -135,6 +139,45 @@ func (a *API) Insights(c *gin.Context) {
 	response.OK2(c, gin.H{"shortages": shorts, "dueRisks": risks, "wcLoads": wcl})
 }
 
+// StockSums 按物料汇总现有量（erp MRP/plan、mes board 经通道）。
+func (a *API) StockSums(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	var rows []struct {
+		MaterialID int64   `json:"materialId"`
+		Qty        float64 `json:"qty"`
+	}
+	a.DB.Raw(`SELECT material_id, SUM(qty_on_hand) qty FROM wms.stocks WHERE tenant_id=? AND factory_id=? GROUP BY material_id`, tenantID, factoryID).Scan(&rows)
+	response.OK2(c, gin.H{"list": rows})
+}
+
+// ReservedSums 按物料汇总预占 held。
+func (a *API) ReservedSums(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	var rows []struct {
+		MaterialID int64   `json:"materialId"`
+		Qty        float64 `json:"qty"`
+	}
+	a.DB.Raw(`SELECT material_id, SUM(qty) qty FROM wms.stock_reservations WHERE tenant_id=? AND factory_id=? AND status='held' GROUP BY material_id`, tenantID, factoryID).Scan(&rows)
+	response.OK2(c, gin.H{"list": rows})
+}
+
+// StockSingle 单物料现有量。
+func (a *API) StockSingle(c *gin.Context) {
+	tenantID, factoryID, matID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId"), queryInt64(c, "materialId")
+	var q float64
+	a.DB.Raw(`SELECT COALESCE(SUM(qty_on_hand),0) FROM wms.stocks WHERE tenant_id=? AND factory_id=? AND material_id=?`, tenantID, factoryID, matID).Scan(&q)
+	response.OK2(c, gin.H{"qty": q})
+}
+
+// StockOrderTodos 出入库待办计数（board）。
+func (a *API) StockOrderTodos(c *gin.Context) {
+	tenantID, factoryID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId")
+	var rcv, shp int64
+	a.DB.Raw(`SELECT COUNT(*) FROM wms.stock_orders WHERE tenant_id=? AND factory_id=? AND status IN ('draft','doing') AND doc_type='rcv'`, tenantID, factoryID).Scan(&rcv)
+	a.DB.Raw(`SELECT COUNT(*) FROM wms.stock_orders WHERE tenant_id=? AND factory_id=? AND status IN ('draft','doing') AND doc_type='shp'`, tenantID, factoryID).Scan(&shp)
+	response.OK2(c, gin.H{"rcv": rcv, "shp": shp})
+}
+
 // FactoryCheck 工厂停用校验（identity 侧远程调用）：返回未结单据数，>0 禁止停用。
 func (a *API) FactoryCheck(c *gin.Context) {
 	factoryID, _ := strconv.ParseInt(c.Query("factoryId"), 10, 64)
@@ -146,4 +189,15 @@ func (a *API) FactoryCheck(c *gin.Context) {
 	a.DB.Model(&model.WorkOrder{}).Where("factory_id=? AND status IN ('draft','released','running','paused','finished')", factoryID).Count(&wo)
 	a.DB.Model(&model.StockOrder{}).Where("factory_id=? AND status IN ('draft','doing')", factoryID).Count(&so)
 	response.OK2(c, gin.H{"openDocs": wo + so})
+}
+
+func queryInt64(c *gin.Context, k string) int64 {
+	var v int64
+	for _, ch := range c.Query(k) {
+		if ch < '0' || ch > '9' {
+			return 0
+		}
+		v = v*10 + int64(ch-'0')
+	}
+	return v
 }

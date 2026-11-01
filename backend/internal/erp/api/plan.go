@@ -33,13 +33,21 @@ func (p *PlanAPI) Atp(c *gin.Context) {
 	if v := c.Query("qty"); v != "" {
 		qty, _ = strconv.ParseFloat(v, 64)
 	}
+	mid, _ := strconv.ParseInt(matID, 10, 64)
 	type agg struct{ Q float64 }
 	var a agg
-	p.DB.Model(&model.Stock{}).Select("COALESCE(SUM(qty_on_hand),0) q").
-		Where("tenant_id=? AND factory_id=? AND material_id=?", ac.TenantID, ac.FactoryID, matID).Scan(&a)
+	if q, err := client.WMS().StockSingle(c.Request.Context(), ac.TenantID, ac.FactoryID, mid); err == nil {
+		a.Q = q
+	}
 	onHand := a.Q
-	p.DB.Model(&model.StockReservation{}).Select("COALESCE(SUM(qty),0) q").
-		Where("tenant_id=? AND factory_id=? AND material_id=? AND status='held'", ac.TenantID, ac.FactoryID, matID).Scan(&a)
+	a.Q = 0
+	if sums, err := client.WMS().ReservedSums(c.Request.Context(), ac.TenantID, ac.FactoryID); err == nil {
+		for _, r := range sums {
+			if r.MaterialID == mid {
+				a.Q = r.Qty
+			}
+		}
+	}
 	held := a.Q
 	// 在途：已审未入库采购（取最早交期）
 	var inTransit struct {
@@ -69,7 +77,6 @@ func (p *PlanAPI) Atp(c *gin.Context) {
 	} else if inTransit.Date != nil && inTransit.Date.Before(earliest) == false {
 		earliest = *inTransit.Date
 	}
-	mid, _ := strconv.ParseInt(matID, 10, 64)
 	mat, _ := client.MatRef(c.Request.Context(), ac.TenantID, mid)
 	feasible := qty == 0 || available >= qty
 	if !feasible && mat.ID != 0 {

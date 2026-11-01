@@ -100,8 +100,10 @@ func (b *BoardAPI) DashboardSummary(c *gin.Context) {
 	b.DB.Model(&model.PurchaseOrder{}).Scopes(sc).
 		Where("status IN ('arriving','receiving') AND EXISTS (SELECT 1 FROM erp.purchase_order_lines l WHERE l.purchase_order_id = purchase_orders.id AND l.delivery_date < now())").
 		Count(&counts.PoOverdue)
-	b.DB.Model(&model.StockOrder{}).Scopes(sc).Where("status IN ('draft','doing') AND doc_type='rcv'").Count(&counts.RcvTodo)
-	b.DB.Model(&model.StockOrder{}).Scopes(sc).Where("status IN ('draft','doing') AND doc_type='shp'").Count(&counts.ShpTodo)
+	rcvTodo, _, _ := client.WMS().StockOrderTodos(c.Request.Context(), ac.TenantID, ac.FactoryID)
+	counts.RcvTodo = rcvTodo
+	_, shpTodo, _ := client.WMS().StockOrderTodos(c.Request.Context(), ac.TenantID, ac.FactoryID)
+	counts.ShpTodo = shpTodo
 	b.DB.Model(&model.QcRecord{}).Scopes(sc).Where("result='pending'").Count(&counts.QcPending)
 	counts.MaterialCount, _ = client.M().CountMaterials(c.Request.Context(), ac.TenantID)
 
@@ -115,14 +117,10 @@ func (b *BoardAPI) DashboardSummary(c *gin.Context) {
 	}
 	var alerts []stockAlert
 	if matMap, merr := client.M().MaterialMap(c.Request.Context(), ac.TenantID); merr == nil {
-		var stockRows []struct {
-			MaterialID int64
-			Q          float64
-		}
-		b.DB.Raw(`SELECT material_id, SUM(qty_on_hand) AS q FROM wms.stocks WHERE factory_id=? GROUP BY material_id`, ac.FactoryID).Scan(&stockRows)
+		stockSums, _ := client.WMS().StockSums(c.Request.Context(), ac.TenantID, ac.FactoryID)
 		onHand := map[int64]float64{}
-		for _, r := range stockRows {
-			onHand[r.MaterialID] = r.Q
+		for _, r := range stockSums {
+			onHand[r.MaterialID] = r.Qty
 		}
 		for id, mt := range matMap {
 			if mt.Status == 1 && mt.SafetyStock > 0 && onHand[id] < mt.SafetyStock {

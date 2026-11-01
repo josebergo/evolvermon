@@ -48,25 +48,16 @@ func (m *MrpAPI) Run(c *gin.Context) {
 
 	// 可用量（现有 − held 预占，下限 0：预占超出现有时不应放大净需求）
 	onHand := map[int64]float64{}
-	var stockRows []struct {
-		MaterialID int64
-		Qty        float64
-	}
-	m.DB.Model(&model.Stock{}).Select("material_id, SUM(qty_on_hand) qty").
-		Where("tenant_id=? AND factory_id=?", ac.TenantID, ac.FactoryID).Group("material_id").Scan(&stockRows)
-	for _, r := range stockRows {
-		onHand[r.MaterialID] = r.Qty
+	if stockSums, err := client.WMS().StockSums(c.Request.Context(), ac.TenantID, ac.FactoryID); err == nil {
+		for _, r := range stockSums {
+			onHand[r.MaterialID] = r.Qty
+		}
 	}
 	held := map[int64]float64{}
-	var heldRows []struct {
-		MaterialID int64
-		Qty        float64
-	}
-	m.DB.Model(&model.StockReservation{}).Select("material_id, SUM(qty) qty").
-		Where("tenant_id=? AND factory_id=? AND status='held'", ac.TenantID, ac.FactoryID).
-		Group("material_id").Scan(&heldRows)
-	for _, r := range heldRows {
-		held[r.MaterialID] = r.Qty
+	if heldSums, err := client.WMS().ReservedSums(c.Request.Context(), ac.TenantID, ac.FactoryID); err == nil {
+		for _, r := range heldSums {
+			held[r.MaterialID] = r.Qty
+		}
 	}
 	available := func(id int64) float64 { return max(onHand[id]-held[id], 0) }
 
