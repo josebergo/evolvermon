@@ -155,6 +155,17 @@ func New(db *gorm.DB, jm *jwtx.Manager, domains ...string) *gin.Engine {
 	v1 := r.Group("/api/v1")
 	v1.Use(middleware.Auth(jm, db))
 
+	wantsDomainFor := func(ds []string, d string) bool {
+		if len(ds) == 0 || (len(ds) == 1 && ds[0] == "core") {
+			return true // 空或 core = 三域全注册
+		}
+		for _, x := range ds {
+			if x == d {
+				return true
+			}
+		}
+		return false
+	}
 	wants := func(d string) bool {
 		if len(domains) == 0 {
 			return true
@@ -172,8 +183,16 @@ func New(db *gorm.DB, jm *jwtx.Manager, domains ...string) *gin.Engine {
 	if wants("master") {
 		registerMaster(v1, db)
 	}
-	if wants("core") {
-		registerCore(v1, db)
+	if wants("core") { // core = erp+mes+wms（单进程）；细分域由 cmd/core-* 直配
+		if wantsDomainFor(domains, "erp") {
+			registerERP(v1, db)
+		}
+		if wantsDomainFor(domains, "mes") {
+			registerMES(v1, db)
+		}
+		if wantsDomainFor(domains, "wms") {
+			registerWMS(v1, db)
+		}
 	}
 	if wants("integration") {
 		registerIntegration(v1, db)
@@ -281,13 +300,19 @@ func registerPlatform(r *gin.Engine, v1 *gin.RouterGroup, db *gorm.DB, jm *jwtx.
 }
 
 // registerCore 核心交易域：销售/采购/MRP/计划/工单/质检/库存/调拨/看板/追溯/打印（主数据见 registerMaster）。
+// registerCore 兼容入口（= erp+mes+wms 全注册；routerDomains("core") 场景）。
 func registerCore(v1 *gin.RouterGroup, db *gorm.DB) {
-	mst := &masterapi.MasterAPI{DB: db} // trace 工单追溯用（Phase 3 API 化）
+	registerERP(v1, db)
+	registerMES(v1, db)
+	registerWMS(v1, db)
+}
+
+// registerERP erp 域：销售/采购/请购/MRP/计划/财务。
+func registerERP(v1 *gin.RouterGroup, db *gorm.DB) {
 	erp := &erpapi.ErpAPI{DB: db}
-	mes := &mesapi.MesAPI{DB: db}
-	wms := &wmsapi.WmsAPI{DB: db}
 	mrp := &erpapi.MrpAPI{DB: db}
-	board := &mesapi.BoardAPI{DB: db}
+	finance := &erpapi.FinanceAPI{DB: db}
+	_ = finance
 	// ---- ERP 交易 ----
 	crudRes[model.SalesOrder](v1, db, "erp:sales", "/sales-orders", crud.Options[model.SalesOrder]{
 		FactoryScoped: true, SearchCols: []string{"doc_no"}, FilterCols: []string{"status", "customer_id"},
@@ -321,6 +346,16 @@ func registerCore(v1 *gin.RouterGroup, db *gorm.DB) {
 	act(v1, "erp:mrp", "POST", "/mrp/run", mrp.Run)
 	act(v1, "erp:mrp", "POST", "/mrp/suggestions/convert", mrp.Convert)
 
+
+}
+
+// registerMES mes 域：工单/报工/质检/追溯/看板/打印。
+func registerMES(v1 *gin.RouterGroup, db *gorm.DB) {
+	mst := &masterapi.MasterAPI{DB: db} // trace 工单追溯（Phase 3 API 化）
+	mes := &mesapi.MesAPI{DB: db}
+	wms := &wmsapi.WmsAPI{DB: db} // QcRecords 路由归属 mes（Phase 3 API 化时归位）
+	board := &mesapi.BoardAPI{DB: db}
+	_ = mst
 	// ---- MES ----
 	crudRes[model.WorkOrder](v1, db, "mes:workorder", "/work-orders", crud.Options[model.WorkOrder]{
 		FactoryScoped: true, SearchCols: []string{"doc_no"}, FilterCols: []string{"status", "material_id"},
@@ -381,6 +416,12 @@ func registerCore(v1 *gin.RouterGroup, db *gorm.DB) {
 	act(v1, "mes:report", "GET", "/kanban/today", board.KanbanToday)
 	act(v1, "mes:workorder", "GET", "/dashboard/summary", board.DashboardSummary)
 
+
+}
+
+// registerWMS wms 域：库存/出入库/盘点/预占/调拨/序列号。
+func registerWMS(v1 *gin.RouterGroup, db *gorm.DB) {
+	wms := &wmsapi.WmsAPI{DB: db}
 	// ---- WMS ----
 	act(v1, "wms:stock", "GET", "/stocks", wms.Stocks)
 	act(v1, "wms:stock", "GET", "/stocks/available", wms.Available)
@@ -415,6 +456,7 @@ func registerIntegration(v1 *gin.RouterGroup, db *gorm.DB) {
 }
 
 // registerMaster 主数据域（Phase 2 服务化为 cmd/master-data）：物料/BOM/工艺/工作中心/客商。
+
 func registerMaster(v1 *gin.RouterGroup, db *gorm.DB) {
 	mst := &masterapi.MasterAPI{DB: db}
 	// ---- 主数据 ----

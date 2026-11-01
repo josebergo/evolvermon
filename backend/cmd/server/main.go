@@ -134,12 +134,18 @@ func routerDomains(roles string) []string {
 		return nil
 	case "core":
 		return []string{"core"}
+	case "erp":
+		return []string{"erp"}
+	case "mes":
+		return []string{"mes"}
+	case "wms":
+		return []string{"wms"}
 	case "platform":
 		return []string{"platform"}
 	case "integration":
 		return []string{"integration"}
 	default:
-		log.Fatalf("invalid EM_ROLES: %s (all|core|platform|integration)", roles)
+		log.Fatalf("invalid EM_ROLES: %s (all|core|erp|mes|wms|platform|integration)", roles)
 		return nil
 	}
 }
