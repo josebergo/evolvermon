@@ -3,6 +3,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,10 +13,42 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/evolvermon/evolvermon/internal/model"
 )
 
-// CoreMes mes 域读通道。
+type gormWO = model.WorkOrder
+
+// woDocNo 取号钩子（wire 装配 data.NextDocNo，避免 client→data 环）。
+var woDocNo func(db *gorm.DB, tenantID int64) (string, error)
+
+// SetWODocNo 注入取号函数。
+func SetWODocNo(f func(db *gorm.DB, tenantID int64) (string, error)) { woDocNo = f }
+
+// WOCreateResult 建工单结果。
+type WOCreateResult struct {
+	WoID  int64  `json:"woId"`
+	DocNo string `json:"docNo"`
+	Reused bool  `json:"reused"`
+}
+
+// WOCreateReq 建工单请求（mrp 转单；幂等键入 Remark）。
+type WOCreateReq struct {
+	TenantID   int64      `json:"tenantId"`
+	FactoryID  int64      `json:"factoryId"`
+	UserID     int64      `json:"userId"`
+	MaterialID int64      `json:"materialId"`
+	Qty        float64    `json:"qty"`
+	SourceType string     `json:"sourceType"`
+	SourceDocNo string    `json:"sourceDocNo"`
+	PlanStartAt interface{} `json:"planStartAt"`
+	PlanEndAt   interface{} `json:"planEndAt"`
+	IdemKey    string     `json:"idemKey"`
+}
+
+// CoreMes mes 域通道。
 type CoreMes interface {
+	CreateWO(ctx context.Context, req WOCreateReq) (*WOCreateResult, error)
 	WorkOrders(ctx context.Context, tenantID, factoryID int64, statuses string) ([]map[string]any, error)
 	WoOps(ctx context.Context, tenantID, factoryID int64, statuses string) ([]map[string]any, error)
 	WoCounts(ctx context.Context, tenantID, factoryID int64) (active, overdue int64, err error)
@@ -28,6 +61,35 @@ type CoreErp interface {
 }
 
 type localMes struct{ db *gorm.DB }
+
+func (l *localMes) CreateWO(_ context.Context, req WOCreateReq) (*WOCreateResult, error) {
+	idem := ""
+	if req.IdemKey != "" {
+		idem = "idem:" + req.IdemKey
+		var exist gormWO
+		if err := l.db.Where("tenant_id=? AND remark=?", req.TenantID, idem).First(&exist).Error; err == nil {
+			return &WOCreateResult{WoID: exist.ID, DocNo: exist.DocNo, Reused: true}, nil
+		}
+	}
+	if woDocNo == nil {
+		return nil, fmt.Errorf("woDocNo not wired")
+	}
+	docNo, err := woDocNo(l.db, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	two := gormWO{
+		MaterialID: req.MaterialID, Qty: req.Qty, SourceType: req.SourceType,
+		SourceDocNo: req.SourceDocNo, Remark: idem,
+	}
+	two.TenantID = req.TenantID
+	two.FactoryID = &req.FactoryID
+	two.DocNo = docNo
+	if err := l.db.Create(&two).Error; err != nil {
+		return nil, err
+	}
+	return &WOCreateResult{WoID: two.ID, DocNo: two.DocNo}, nil
+}
 
 func (l *localMes) WorkOrders(_ context.Context, tenantID, factoryID int64, statuses string) ([]map[string]any, error) {
 	q := l.db.Table("mes.work_orders").
@@ -106,6 +168,36 @@ func splitStatuses(s string) []string {
 type remoteCore struct {
 	base, token string
 	hc          *http.Client
+}
+
+func (r *remoteCore) CreateWO(ctx context.Context, req WOCreateReq) (*WOCreateResult, error) {
+	body, _ := json.Marshal(req)
+	q, err := http.NewRequestWithContext(ctx, http.MethodPost, r.base+"/internal/core/mes/create-wo", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	q.Header.Set("Content-Type", "application/json")
+	q.Header.Set("X-Internal-Token", r.token)
+	resp, err := r.hc.Do(q)
+	if err != nil {
+		return nil, fmt.Errorf("mes create-wo: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("mes create-wo: http %d", resp.StatusCode)
+	}
+	var out struct {
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    WOCreateResult  `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out.Code != 0 {
+		return nil, fmt.Errorf("mes create-wo: %s", out.Message)
+	}
+	return &out.Data, nil
 }
 
 func (r *remoteCore) list(ctx context.Context, path string) ([]map[string]any, error) {

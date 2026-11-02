@@ -15,7 +15,8 @@ import (
 
 // Identity 启用 identity 远程通道（单号/审计/认证上下文）。幂等。
 func Identity() {
-	wapi.DocNo = data.NextDocNo // wapi 建单取号（data.NextDocNo 内部已含远程钩子；Lite=本地）
+	wapi.DocNo = data.NextDocNo
+	client.SetWODocNo(func(db *gorm.DB, tenantID int64) (string, error) { return data.NextDocNo(db, tenantID, "WO") }) // wapi 建单取号（data.NextDocNo 内部已含远程钩子；Lite=本地）
 	c := client.Identity()
 	if c == nil {
 		return

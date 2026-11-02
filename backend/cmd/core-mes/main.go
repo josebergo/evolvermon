@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	ciapi "github.com/evolvermon/evolvermon/internal/core/internalapi"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
@@ -50,6 +51,7 @@ func main() {
 
 	jm := jwtx.New(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTLHour, cfg.RefreshTTLDay)
 	r := router.New(db, jm, "mes")
+	(&ciapi.API{DB: db}).Register(r) // /internal/core/*（共享库期三进程对称挂载）
 	addr := getenvDefault("EM_HTTP_ADDR", ":8087")
 	log.Printf("core-mes listening on %s", addr)
 	if err := r.Run(addr); err != nil {

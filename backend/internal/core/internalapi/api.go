@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
+	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"gorm.io/gorm"
 
@@ -34,6 +35,7 @@ func (a *API) Register(r *gin.Engine) {
 	g.POST("/wms/create-order", a.WmsCreateOrder)
 	g.POST("/wms/reserve", a.WmsReserve)
 	g.POST("/wms/release", a.WmsRelease)
+	g.POST("/mes/create-wo", a.MesCreateWO)
 	g.GET("/mes/wos", a.MesWorkOrders)
 	g.GET("/mes/wo-ops", a.MesWoOps)
 	g.GET("/mes/wo-counts", a.MesWoCounts)
@@ -228,6 +230,53 @@ func (a *API) WmsRelease(c *gin.Context) {
 		return
 	}
 	response.OK2(c, gin.H{"ok": true})
+}
+
+// MesCreateWO 幂等建工单（mrp 转单；幂等键入 Remark）。
+func (a *API) MesCreateWO(c *gin.Context) {
+	var req struct {
+		TenantID   int64  `json:"tenantId"`
+		FactoryID  int64  `json:"factoryId"`
+		UserID     int64  `json:"userId"`
+		MaterialID int64  `json:"materialId"`
+		Qty        float64 `json:"qty"`
+		SourceType string `json:"sourceType"`
+		SourceDocNo string `json:"sourceDocNo"`
+		PlanStartAt *time.Time `json:"planStartAt"`
+		PlanEndAt   *time.Time `json:"planEndAt"`
+		IdemKey    string `json:"idemKey"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.MaterialID == 0 {
+		response.Fail(c, response.NewBiz(response.ErrParam, "materialId required"))
+		return
+	}
+	idem := ""
+	if req.IdemKey != "" {
+		idem = "idem:" + req.IdemKey
+		var exist model.WorkOrder
+		if err := a.DB.Where("tenant_id=? AND remark=?", req.TenantID, idem).First(&exist).Error; err == nil {
+			response.OK2(c, gin.H{"woId": exist.ID, "docNo": exist.DocNo, "reused": true})
+			return
+		}
+	}
+	docNo, err := data.NextDocNo(a.DB, req.TenantID, "WO")
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	two := model.WorkOrder{
+		MaterialID: req.MaterialID, Qty: req.Qty, SourceType: req.SourceType,
+		SourceDocNo: req.SourceDocNo, PlanStartAt: req.PlanStartAt, PlanEndAt: req.PlanEndAt,
+		Remark: idem,
+	}
+	two.TenantID = req.TenantID
+	two.FactoryID = &req.FactoryID
+	two.DocNo = docNo
+	if err := a.DB.Create(&two).Error; err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, gin.H{"woId": two.ID, "docNo": two.DocNo})
 }
 
 // MesWorkOrders 工单列表（erp 计划/MRP 经通道；statuses 逗号分隔可选）。

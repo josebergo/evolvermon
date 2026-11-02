@@ -4,7 +4,6 @@ package api
 
 import (
 	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"fmt"
 	"time"
 
@@ -201,22 +200,17 @@ func (m *MrpAPI) Convert(c *gin.Context) {
 				if s.SourceType != "make" {
 					continue
 				}
-				docNo, err := data.NextDocNo(tx, ac.TenantID, "WO")
-				if err != nil {
-					return err
-				}
-				wo := model.WorkOrder{
+				res, werr := client.MES().CreateWO(c.Request.Context(), client.WOCreateReq{
+					TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
 					MaterialID: s.MaterialID, Qty: s.NetQty, SourceType: "mrp",
-					SourceDocNo: joinSources(s.Sources), PlanStartAt: conv.PtrTime(time.Now()),
-					PlanEndAt:   conv.PtrTime(s.DueDate),
+					SourceDocNo: joinSources(s.Sources),
+					PlanStartAt: time.Now(), PlanEndAt: s.DueDate,
+					IdemKey: fmt.Sprintf("mrp:%d:%v:%v", s.MaterialID, s.NetQty, s.DueDate),
+				})
+				if werr != nil {
+					return werr
 				}
-				wo.TenantID = ac.TenantID
-				wo.FactoryID = &ac.FactoryID
-				wo.DocNo = docNo
-				if err := tx.Create(&wo).Error; err != nil {
-					return err
-				}
-				woNos = append(woNos, docNo)
+				woNos = append(woNos, res.DocNo)
 			}
 			return nil
 		}
