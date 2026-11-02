@@ -119,41 +119,28 @@ if werr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置成品仓"))
 		return
 	}
-	docNo, err := data.NextDocNo(e.DB, ac.TenantID, "SHP")
-	if err != nil {
-		response.Fail(c, err)
-		return
+	// Phase 3 ③A(3)：经 CoreWMSWriter 幂等建单（幂等键=sales+SO）
+	lines2 := []wapi.CreateLine{}
+	for _, l := range so.Lines {
+		remain := l.Qty - l.ShippedQty
+		if remain <= 0 {
+			continue
+		}
+		lines2 = append(lines2, wapi.CreateLine{MaterialID: l.MaterialID, Qty: remain})
 	}
-	order := model.StockOrder{
-		DocType: model.DocSHP, WarehouseID: wh.ID, SourceType: "sales",
+	res, werr2 := client.Writer().CreateOrder(wapi.CreateReq{
+		TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
+		DocType: "shp", SourceType: "sales",
 		SourceDocType: "sales_order", SourceDocID: so.ID, SourceDocNo: so.DocNo,
-	}
-	order.TenantID = ac.TenantID
-	order.FactoryID = &ac.FactoryID
-	order.DocNo = docNo
-	err = e.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&order).Error; err != nil {
-			return err
-		}
-		for i, l := range so.Lines {
-			remain := l.Qty - l.ShippedQty
-			if remain <= 0 {
-				continue
-			}
-			line := model.StockOrderLine{
-				StockOrderID: order.ID, LineNo: i + 1, MaterialID: l.MaterialID,
-				Qty: remain,
-			}
-			if err := tx.Create(&line).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		WarehouseID: wh.ID, IdemKey: fmt.Sprintf("sales:%d", so.ID),
+		Lines: lines2,
 	})
-	if err != nil {
-		response.Fail(c, err)
+	if werr2 != nil {
+		response.Fail(c, werr2)
 		return
 	}
+	var order model.StockOrder
+	e.DB.First(&order, res.OrderID)
 	data.Audit(e.DB, ac, c.ClientIP(), "create-shipment", "stock_order", order.DocNo, "销售发货 " + so.DocNo, "", "")
 	response.OK2(c, order)
 }
@@ -283,11 +270,7 @@ if werr != nil {
 	}
 	var order model.StockOrder
 	e.DB.First(&order, res.OrderID)
-	err := e.DB.Model(&model.PurchaseOrder{}).Where("id=?", po.ID).Update("status", model.StReceiving).Error
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
+	_ = e.DB.Model(&model.PurchaseOrder{}).Where("id=?", po.ID).Update("status", model.StReceiving).Error
 	response.OK2(c, order)
 }
 

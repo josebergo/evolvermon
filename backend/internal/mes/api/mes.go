@@ -222,51 +222,41 @@ func (m *MesAPI) PickingRequest(c *gin.Context) {
 		isSemi[mt.ID] = mt.Category == string(model.MatSemi)
 	}
 
+	// Phase 3 ③A(3)：经 CoreWMSWriter 幂等建单（两仓各一张；幂等键=picking+WO+仓类型）
 	orders := []model.StockOrder{}
-	err := m.DB.Transaction(func(tx *gorm.DB) error {
-		mk := func(wh client.WhLite, has bool) error {
-			if !has || wh.ID == 0 {
-				return nil
-			}
-			docNo, err := data.NextDocNo(tx, ac.TenantID, "SHP")
-			if err != nil {
-				return err
-			}
-			order := model.StockOrder{
-				DocType: model.DocSHP, WarehouseID: wh.ID, SourceType: "picking",
-				SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo,
-			}
-			order.TenantID = ac.TenantID
-			order.FactoryID = &ac.FactoryID
-			order.DocNo = docNo
-			if err := tx.Create(&order).Error; err != nil {
-				return err
-			}
-			no := 0
-			for _, l := range snapshot.Lines {
-				if isSemi[l.MaterialID] != (wh.Type == string(model.WhSemi)) {
-					continue
-				}
-				no++
-				need := wo.Qty * l.Qty * (1 + l.ScrapRate/100)
-				if err := tx.Create(&model.StockOrderLine{
-					StockOrderID: order.ID, LineNo: no, MaterialID: l.MaterialID, Qty: need,
-				}).Error; err != nil {
-					return err
-				}
-			}
-			orders = append(orders, order)
-			return nil
+	mk := func(wh client.WhLite, suffix string) {
+		if wh.ID == 0 {
+			return
 		}
-		if err := mk(whRaw, true); err != nil {
-			return err
+		lines2 := []wapi.CreateLine{}
+		no := 0
+		for _, l := range snapshot.Lines {
+			if isSemi[l.MaterialID] != (wh.Type == string(model.WhSemi)) {
+				continue
+			}
+			no++
+			need := wo.Qty * l.Qty * (1 + l.ScrapRate/100)
+			lines2 = append(lines2, wapi.CreateLine{MaterialID: l.MaterialID, Qty: need})
 		}
-		return mk(whSemi, whSemi.ID != 0)
-	})
-	if err != nil {
-		response.Fail(c, err)
-		return
+		if len(lines2) == 0 {
+			return
+		}
+		res, werr := client.Writer().CreateOrder(wapi.CreateReq{
+			TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
+			DocType: "shp", SourceType: "picking",
+			SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo,
+			WarehouseID: wh.ID, IdemKey: fmt.Sprintf("picking:%d:%s", wo.ID, suffix),
+			Lines: lines2,
+		})
+		if werr != nil {
+			return
+		}
+		var order model.StockOrder
+		m.DB.First(&order, res.OrderID)
+		orders = append(orders, order)
 	}
+	mk(whRaw, "raw")
+	mk(whSemi, "semi")
 	response.OK2(c, gin.H{"orders": orders, "docNos": func() []string {
 		ns := []string{}
 		for _, o := range orders {
