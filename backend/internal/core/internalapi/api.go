@@ -3,6 +3,9 @@
 package internalapi
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"github.com/evolvermon/evolvermon/internal/middleware"
 	"strings"
 	"time"
@@ -39,6 +42,10 @@ func (a *API) Register(r *gin.Engine) {
 	g.POST("/wms/reserve", a.WmsReserve)
 	g.POST("/wms/release", a.WmsRelease)
 	g.POST("/mes/create-wo", a.MesCreateWO)
+	g.GET("/mes/has-iqc", a.HasIqc)
+	g.GET("/wms/pick-agg", a.PickAgg)
+	g.GET("/wms/trace-serial", a.TraceSerial)
+	g.GET("/wms/trace-batch", a.TraceBatch)
 	g.POST("/write-back", a.WriteBackEp)
 	g.POST("/wms/transfer-bucket", a.TransferBucketEp)
 	g.POST("/wms/release-pending", a.ReleasePendingEp)
@@ -85,24 +92,85 @@ func (a *API) MaterialCheck(c *gin.Context) {
 		return
 	}
 	var so, po, wo int64
-	a.DB.Raw(`SELECT COUNT(*) FROM erp.sales_order_lines l JOIN erp.sales_orders o ON o.id=l.sales_order_id
-		WHERE l.material_id=? AND o.tenant_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, materialID, tenantID).Scan(&so)
-	a.DB.Raw(`SELECT COUNT(*) FROM erp.purchase_order_lines l JOIN erp.purchase_orders o ON o.id=l.purchase_order_id
-		WHERE l.material_id=? AND o.tenant_id=? AND o.status IN ('draft','arriving','receiving') AND o.deleted_at IS NULL`, materialID, tenantID).Scan(&po)
-	a.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND material_id=? AND status IN ('draft','released','running','paused')", tenantID, materialID).Count(&wo)
+	if erpURL := os.Getenv("EM_ERP_URL"); erpURL != "" {
+		q, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/erp/mat-open-count?tenantId=%d&materialId=%d", erpURL, tenantID, materialID), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(q); err == nil {
+			var out struct {
+				Data struct {
+					N int64 `json:"n"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			resp.Body.Close()
+			so, po = out.Data.N, 0 // 端点返回 so+po 合计（po 并入 N）
+		}
+	} else {
+		a.DB.Raw(`SELECT COUNT(*) FROM erp.sales_order_lines l JOIN erp.sales_orders o ON o.id=l.sales_order_id
+			WHERE l.material_id=? AND o.tenant_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, materialID, tenantID).Scan(&so)
+		a.DB.Raw(`SELECT COUNT(*) FROM erp.purchase_order_lines l JOIN erp.purchase_orders o ON o.id=l.purchase_order_id
+			WHERE l.material_id=? AND o.tenant_id=? AND o.status IN ('draft','arriving','receiving') AND o.deleted_at IS NULL`, materialID, tenantID).Scan(&po)
+	}
+	if mesURL := os.Getenv("EM_MES_URL"); mesURL != "" {
+		q, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/mes/wo-open-count?factoryId=%d", mesURL, tenantID), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(q); err == nil {
+			var out struct {
+				Data struct {
+					N int64 `json:"n"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			resp.Body.Close()
+			wo = out.Data.N
+		}
+	} else {
+		a.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND material_id=? AND status IN ('draft','released','running','paused')", tenantID, materialID).Count(&wo)
+	}
 	response.OK2(c, gin.H{"openDocs": so + po + wo})
 }
 
 // Insights 智能建议数据源（integration 代理调用；core 直查 wms/mes + master 走通道）。
 func (a *API) Insights(c *gin.Context) {
-	tenantID, _ := strconv.ParseInt(c.Query("tenantId"), 10, 64)
+	// 三库：insights 聚合读 mes+wms——转发 mes 进程（归属域）；共享库直接执行
+	if mesURL := os.Getenv("EM_MES_URL"); mesURL != "" {
+		q, _ := http.NewRequest(http.MethodGet, mesURL+"/internal/core/insights?tenantId="+c.Query("tenantId")+"&factoryId="+c.Query("factoryId"), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(q); err == nil {
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			c.Data(http.StatusOK, "application/json", b)
+			return
+		}
+	}
+		tenantID, _ := strconv.ParseInt(c.Query("tenantId"), 10, 64)
 	factoryID, _ := strconv.ParseInt(c.Query("factoryId"), 10, 64)
 	type stockRow struct {
 		MaterialID int64
 		Q          float64
 	}
 	var stocks []stockRow
-	a.DB.Raw(`SELECT material_id, SUM(qty_on_hand) AS q FROM wms.stocks WHERE factory_id=? GROUP BY material_id`, factoryID).Scan(&stocks)
+	if wmsURL := os.Getenv("EM_WMS_URL"); wmsURL != "" {
+		q2, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/wms/stock-sums?tenantId=%d&factoryId=%d", wmsURL, tenantID, factoryID), nil)
+		q2.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(q2); err == nil {
+			var out struct {
+				Data struct {
+					List []struct {
+						MaterialID int64   `json:"materialId"`
+						Qty        float64 `json:"qty"`
+					} `json:"list"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			resp.Body.Close()
+			for _, x := range out.Data.List {
+				stocks = append(stocks, stockRow{MaterialID: x.MaterialID, Q: x.Qty})
+			}
+		}
+	} else {
+		a.DB.Raw(`SELECT material_id, SUM(qty_on_hand) AS q FROM wms.stocks WHERE factory_id=? GROUP BY material_id`, factoryID).Scan(&stocks)
+	}
 	onHand := map[int64]float64{}
 	for _, r := range stocks {
 		onHand[r.MaterialID] = r.Q
@@ -319,6 +387,43 @@ func (a *API) WriteBackEp(c *gin.Context) {
 	response.OK2(c, gin.H{"ok": true})
 }
 
+// PickAgg 工单领料/退料聚合（mes ReturnMaterial 经通道；三库）。
+func (a *API) PickAgg(c *gin.Context) {
+	tenantID, woID := queryInt64(c, "tenantId"), queryInt64(c, "workOrderId")
+	type aggRow struct {
+		MaterialID int64   `json:"materialId"`
+		Qty        float64 `json:"qty"`
+	}
+	var picked, returned []aggRow
+	a.DB.Raw(`SELECT l.material_id, SUM(l.qty) qty FROM wms.stock_order_lines l
+		JOIN wms.stock_orders o ON o.id=l.stock_order_id
+		WHERE o.tenant_id=? AND o.source_type='picking' AND o.source_doc_id=? AND o.status='done'
+		GROUP BY l.material_id`, tenantID, woID).Scan(&picked)
+	a.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) qty FROM wms.stock_order_lines l
+		JOIN wms.stock_orders o ON o.id=l.stock_order_id
+		WHERE o.tenant_id=? AND o.source_type='return' AND o.source_doc_id=? AND o.status IN ('done','doing')
+		GROUP BY l.material_id`, tenantID, woID).Scan(&returned)
+	var lastB []aggRow
+	_ = lastB
+	var batches []struct {
+		MaterialID int64   `json:"materialId"`
+		Batch      string  `json:"batch"`
+	}
+	a.DB.Raw(`SELECT DISTINCT ON (material_id) material_id, batch_no AS batch FROM wms.stock_movements
+		WHERE tenant_id=? AND biz_type='领料出库'
+		AND source_doc_id IN (SELECT id FROM wms.stock_orders WHERE source_type='picking' AND source_doc_id=?)
+		ORDER BY material_id, id DESC`, tenantID, woID).Scan(&batches)
+	response.OK2(c, gin.H{"picked": picked, "returned": returned, "batches": batches})
+}
+
+// HasIqc 物料是否配置 IQC 方案（wms 过账判定）。
+func (a *API) HasIqc(c *gin.Context) {
+	tenantID, matID := queryInt64(c, "tenantId"), queryInt64(c, "materialId")
+	var n int64
+	a.DB.Raw(`SELECT COUNT(*) FROM mes.qc_schemes WHERE tenant_id=? AND material_id=? AND check_type='iqc'`, tenantID, matID).Scan(&n)
+	response.OK2(c, gin.H{"has": n > 0})
+}
+
 // MesCreateWO 幂等建工单（mrp 转单；幂等键入 Remark）。
 func (a *API) MesCreateWO(c *gin.Context) {
 	var req struct {
@@ -440,7 +545,23 @@ func (a *API) FactoryCheck(c *gin.Context) {
 		return
 	}
 	var wo, so int64
-	a.DB.Model(&model.WorkOrder{}).Where("factory_id=? AND status IN ('draft','released','running','paused','finished')", factoryID).Count(&wo)
+	// 三库：工单计数经 mes 端点（EM_MES_URL）；出入库单在 wms 自域
+	if mesURL := os.Getenv("EM_MES_URL"); mesURL != "" {
+		q, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/mes/wo-open-count?factoryId=%d", mesURL, factoryID), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(q); err == nil {
+			var out struct {
+				Data struct {
+					N int64 `json:"n"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			resp.Body.Close()
+			wo = out.Data.N
+		}
+	} else {
+		a.DB.Model(&model.WorkOrder{}).Where("factory_id=? AND status IN ('draft','released','running','paused','finished')", factoryID).Count(&wo)
+	}
 	a.DB.Model(&model.StockOrder{}).Where("factory_id=? AND status IN ('draft','doing')", factoryID).Count(&so)
 	response.OK2(c, gin.H{"openDocs": wo + so})
 }
@@ -454,4 +575,59 @@ func queryInt64(c *gin.Context, k string) int64 {
 		v = v*10 + int64(ch-'0')
 	}
 	return v
+}
+
+// TraceSerial 按 SN 查序列号+关联流水（mes trace 经通道）。
+func (a *API) TraceSerial(c *gin.Context) {
+	tenantID := queryInt64(c, "tenantId")
+	var sn model.SerialNumber
+	if err := a.DB.Where("tenant_id=? AND serial=?", tenantID, c.Query("sn")).First(&sn).Error; err != nil {
+		response.OK2(c, gin.H{"sn": nil})
+		return
+	}
+	var moves []model.StockMovement
+	a.DB.Raw("SELECT * FROM wms.stock_movements WHERE batch_no=? ORDER BY id", sn.BatchNo).Scan(&moves)
+	response.OK2(c, gin.H{"sn": sn, "moves": moves})
+}
+
+// TraceBatch 按批次查流水。
+func (a *API) TraceBatch(c *gin.Context) {
+	tenantID := queryInt64(c, "tenantId")
+	var moves []model.StockMovement
+	a.DB.Raw("SELECT * FROM wms.stock_movements WHERE tenant_id=? AND batch_no=? ORDER BY id", tenantID, c.Query("no")).Scan(&moves)
+	response.OK2(c, gin.H{"moves": moves})
+}
+
+// ErpMatOpenCount 物料未结销售+采购单据数（material-check 经通道；合计返回）。
+func (a *API) ErpMatOpenCount(c *gin.Context) {
+	tenantID, matID := queryInt64(c, "tenantId"), queryInt64(c, "materialId")
+	var so, po int64
+	a.DB.Raw(`SELECT COUNT(*) FROM erp.sales_order_lines l JOIN erp.sales_orders o ON o.id=l.sales_order_id
+		WHERE l.material_id=? AND o.tenant_id=? AND o.status IN ('draft','audited','partial') AND o.deleted_at IS NULL`, matID, tenantID).Scan(&so)
+	a.DB.Raw(`SELECT COUNT(*) FROM erp.purchase_order_lines l JOIN erp.purchase_orders o ON o.id=l.purchase_order_id
+		WHERE l.material_id=? AND o.tenant_id=? AND o.status IN ('draft','arriving','receiving') AND o.deleted_at IS NULL`, matID, tenantID).Scan(&po)
+	response.OK2(c, gin.H{"n": so + po})
+}
+
+// ErpDemand 物料在手需求（已审未发；ATP 经通道）。
+func (a *API) ErpDemand(c *gin.Context) {
+	tenantID, matID := queryInt64(c, "tenantId"), queryInt64(c, "materialId")
+	var q float64
+	a.DB.Raw(`SELECT COALESCE(SUM(l.qty-l.shipipped_qty),0) FROM erp.sales_order_lines l
+		JOIN erp.sales_orders o ON o.id=l.sales_order_id AND o.status IN ('audited','partial')
+		WHERE l.material_id=? AND o.tenant_id=?`, matID, tenantID).Scan(&q)
+	response.OK2(c, gin.H{"qty": q})
+}
+
+// ErpInTransit 物料在途（已审未入库采购；ATP 经通道）。
+func (a *API) ErpInTransit(c *gin.Context) {
+	tenantID, factoryID, matID := queryInt64(c, "tenantId"), queryInt64(c, "factoryId"), queryInt64(c, "materialId")
+	var out struct {
+		Qty  float64 `json:"qty"`
+	}
+	a.DB.Raw(`SELECT COALESCE(SUM(l.qty-l.received_qty),0) qty FROM erp.purchase_order_lines l
+		JOIN erp.purchase_orders po ON po.id=l.purchase_order_id
+		WHERE po.tenant_id=? AND po.factory_id=? AND l.material_id=? AND po.status IN ('arriving','receiving')`,
+		tenantID, factoryID, matID).Scan(&out)
+	response.OK2(c, gin.H{"qty": out.Qty})
 }

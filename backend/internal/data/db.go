@@ -46,7 +46,25 @@ func MigrateProfile(db *gorm.DB, profile string) error {
 			&model.Role{}, &model.UserRole{}, &model.Menu{}, &model.AuditLog{},
 			&model.SysParam{}, &model.DocNumberRule{}, &model.IdempotencyKey{}, &model.Attachment{},
 		)
-	case "core":
+	case "erp":
+		return db.AutoMigrate(
+			&model.SalesOrder{}, &model.SalesOrderLine{}, &model.PurchaseRequest{}, &model.PurchaseRequestLine{},
+			&model.PurchaseOrder{}, &model.PurchaseOrderLine{},
+			&model.OutboxMessage{}, &model.ConsumedMessage{},
+		)
+	case "mes":
+		return db.AutoMigrate(
+			&model.WorkOrder{}, &model.WoOperation{}, &model.ProductionReport{},
+			&model.DefectCode{}, &model.QcScheme{}, &model.QcRecord{},
+			&model.OutboxMessage{}, &model.ConsumedMessage{},
+		)
+	case "wms":
+		return db.AutoMigrate(
+			&model.Stock{}, &model.StockMovement{}, &model.StockOrder{}, &model.StockOrderLine{},
+			&model.Stocktaking{}, &model.StocktakingLine{}, &model.StockReservation{}, &model.SerialNumber{},
+			&model.OutboxMessage{}, &model.ConsumedMessage{},
+		)
+	case "core": // core 共享库（mono 形态）：erp+mes+wms 全量
 		return db.AutoMigrate(
 			&model.SalesOrder{}, &model.SalesOrderLine{}, &model.PurchaseRequest{}, &model.PurchaseRequestLine{},
 			&model.PurchaseOrder{}, &model.PurchaseOrderLine{}, &model.WorkOrder{}, &model.WoOperation{},

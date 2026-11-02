@@ -36,11 +36,11 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		if _, err := data.MigrateVersioned(db, "core"); err != nil {
+		if _, err := data.MigrateVersioned(db, "wms"); err != nil {
 			log.Fatalf("migrate failed: %v", err)
 		}
 		if cfg.SeedDemo {
-			if err := seed.RunCoreSplit(db); err != nil { // core 库种子（IQC 方案/期初库存/字典）
+			if err := seed.RunWmsDemo(db); err != nil { // wms 库期初库存
 				log.Printf("seed core split failed (non-fatal): %v", err)
 			}
 		}

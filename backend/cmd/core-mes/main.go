@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ciapi "github.com/evolvermon/evolvermon/internal/core/internalapi"
+	"github.com/evolvermon/evolvermon/seed"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
 	"github.com/evolvermon/evolvermon/internal/data"
@@ -33,8 +34,11 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		if _, err := data.MigrateVersioned(db, "core"); err != nil {
+		if _, err := data.MigrateVersioned(db, "mes"); err != nil {
 			log.Fatalf("migrate failed: %v", err)
+		}
+		if cfg.SeedDemo {
+			seed.RunMesDemo(db)
 		}
 	}
 	wire.Identity()

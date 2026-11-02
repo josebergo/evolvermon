@@ -16,10 +16,11 @@ import (
 	"github.com/evolvermon/evolvermon/internal/model"
 )
 
-// WBLine 回写行（sourceLineId 由 Find*Line 语义简化为按 material+qty 匹配，服务端自行定位）。
+// WBLine 回写行（三库：携带 materialId，端点进程无 wms 表无法回查行）。
 type WBLine struct {
-	LineID int64   `json:"lineId"`
-	Qty    float64 `json:"qty"`
+	LineID     int64   `json:"lineId"`
+	Qty        float64 `json:"qty"`
+	MaterialID int64   `json:"materialId"`
 }
 
 // WBReq 回写请求。
@@ -80,7 +81,7 @@ func HTTPWriteBack(base, token string, req WBReq) error {
 func wbReq(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, lines []PostLine) WBReq {
 	wbl := make([]WBLine, 0, len(lines))
 	for _, l := range lines {
-		wbl = append(wbl, WBLine{LineID: l.LineID, Qty: l.Qty})
+		wbl = append(wbl, WBLine{LineID: l.LineID, Qty: l.Qty, MaterialID: l.MaterialID})
 	}
 	return WBReq{TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
 		Source: order.SourceType, SourceDocID: order.SourceDocID, OrderID: order.ID, DocNo: order.DocNo, Lines: wbl}
@@ -94,7 +95,7 @@ func ErpWriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, l
 	}
 	wbl := make([]WBLine, 0, len(lines))
 	for _, l := range lines {
-		wbl = append(wbl, WBLine{LineID: l.LineID, Qty: l.Qty})
+		wbl = append(wbl, WBLine{LineID: l.LineID, Qty: l.Qty, MaterialID: l.MaterialID})
 	}
 	return httpWB(os.Getenv("EM_ERP_URL"), os.Getenv("EM_INTERNAL_TOKEN"), WBReq{
 		TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
@@ -110,7 +111,7 @@ func MesWriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, l
 	}
 	wbl := make([]WBLine, 0, len(lines))
 	for _, l := range lines {
-		wbl = append(wbl, WBLine{LineID: l.LineID, Qty: l.Qty})
+		wbl = append(wbl, WBLine{LineID: l.LineID, Qty: l.Qty, MaterialID: l.MaterialID})
 	}
 	return httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), WBReq{
 		TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
@@ -131,12 +132,11 @@ func WriteBackLocal(db *gorm.DB, req WBReq) error {
 	ac := &middleware.AuthCtx{TenantID: req.TenantID, FactoryID: req.FactoryID, UserID: req.UserID}
 	lines := make([]PostLine, 0, len(req.Lines))
 	for _, l := range req.Lines {
-		lines = append(lines, PostLine{LineID: l.LineID, Qty: l.Qty})
+		lines = append(lines, PostLine{LineID: l.LineID, Qty: l.Qty, MaterialID: l.MaterialID})
 	}
-	var order model.StockOrder
-	if err := db.Preload("Lines").First(&order, req.OrderID).Error; err != nil {
-		return err
-	}
+	// 端点进程（erp/mes 库）无 wms 单据：order 由请求构造（SN 等 wms 自域段已被 WB_NO_SN 跳过；
+	// purchase 的 AutoQc 在 mes 库端点上正常执行——order.WarehouseID/Lines 仅 IQC 判定用，三库下经 has-iqc 通道）
+	order := model.StockOrder{ID: req.OrderID, DocNo: req.DocNo, SourceType: req.Source, SourceDocID: req.SourceDocID, Lines: wbOrderLines(req.Lines)}
 	// 端点侧强制 Local 执行（清空远程 env 防嵌套转发；WB_NO_SN=1 跳过 wms 自域 SN 段——由 core-wms 调用方执行）
 	os.Setenv("WB_NO_SN", "1")
 	defer os.Unsetenv("WB_NO_SN")
@@ -145,4 +145,12 @@ func WriteBackLocal(db *gorm.DB, req WBReq) error {
 	os.Setenv("EM_MES_URL", "")
 	defer func() { os.Setenv("EM_ERP_URL", e1); os.Setenv("EM_MES_URL", e2) }()
 	return WriteBack(db, ac, order, lines)
+}
+
+func wbOrderLines(ls []WBLine) []model.StockOrderLine {
+	out := make([]model.StockOrderLine, 0, len(ls))
+	for _, l := range ls {
+		out = append(out, model.StockOrderLine{ID: l.LineID, MaterialID: l.MaterialID, Qty: l.Qty})
+	}
+	return out
 }

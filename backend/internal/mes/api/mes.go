@@ -254,9 +254,8 @@ func (m *MesAPI) PickingRequest(c *gin.Context) {
 		if werr != nil {
 			return
 		}
-		var order model.StockOrder
-		m.DB.First(&order, res.OrderID)
-		orders = append(orders, order)
+		orders = append(orders, model.StockOrder{ID: res.OrderID, DocNo: res.DocNo, DocType: model.DocSHP,
+			SourceType: "picking", SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo})
 	}
 	mk(whRaw, "raw")
 	mk(whSemi, "semi")
@@ -315,8 +314,8 @@ func (m *MesAPI) FinishReceipt(c *gin.Context) {
 		response.Fail(c, werr2)
 		return
 	}
-	var order model.StockOrder
-	m.DB.First(&order, res.OrderID)
+	order := model.StockOrder{ID: res.OrderID, DocNo: res.DocNo, DocType: model.DocRCV,
+		SourceType: "production", SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo}
 	response.OK2(c, order)
 }
 
@@ -621,40 +620,58 @@ func (m *MesAPI) ReturnMaterial(c *gin.Context) {
 		MaterialID int64
 		Picked     float64
 	}
-	var rows []row
-	m.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) AS picked
-		FROM wms.stock_order_lines l
-		JOIN wms.stock_orders o ON o.id=l.stock_order_id
-		WHERE o.tenant_id=? AND o.source_type='picking' AND o.source_doc_id=? AND o.status='done'
-		GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rows)
-	var rets []row
-	m.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) AS picked
-		FROM wms.stock_order_lines l
-		JOIN wms.stock_orders o ON o.id=l.stock_order_id
-		WHERE o.tenant_id=? AND o.source_type='return' AND o.source_doc_id=? AND o.status IN ('done','doing')
-		GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rets)
+	type aggRow struct { MaterialID int64 `json:"materialId"`; Picked float64 `json:"qty"`; Batch string `json:"batch"` }
+	rows, rets := []aggRow{}, []aggRow{}
+	lastBatch := map[int64]string{}
+	if wmsURL := os.Getenv("EM_WMS_URL"); wmsURL != "" {
+		q, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/wms/pick-agg?tenantId=%d&workOrderId=%d", wmsURL, ac.TenantID, wo.ID), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(q); err == nil {
+			var out struct {
+				Data struct {
+					Picked   []aggRow `json:"picked"`
+					Returned []aggRow `json:"returned"`
+					Batches  []aggRow `json:"batches"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			resp.Body.Close()
+			rows, rets = out.Data.Picked, out.Data.Returned
+			for _, b := range out.Data.Batches {
+				lastBatch[b.MaterialID] = b.Batch
+			}
+		}
+	} else {
+		m.DB.Raw(`SELECT l.material_id, SUM(l.qty) AS picked
+			FROM wms.stock_order_lines l
+			JOIN wms.stock_orders o ON o.id=l.stock_order_id
+			WHERE o.tenant_id=? AND o.source_type='picking' AND o.source_doc_id=? AND o.status='done'
+			GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rows)
+		m.DB.Raw(`SELECT l.material_id, SUM(l.done_qty) AS picked
+			FROM wms.stock_order_lines l
+			JOIN wms.stock_orders o ON o.id=l.stock_order_id
+			WHERE o.tenant_id=? AND o.source_type='return' AND o.source_doc_id=? AND o.status IN ('done','doing')
+			GROUP BY l.material_id`, ac.TenantID, wo.ID).Scan(&rets)
+		var moves []model.StockMovement
+		m.DB.Raw(`SELECT DISTINCT ON (material_id) material_id, batch_no
+			FROM wms.stock_movements WHERE tenant_id=? AND biz_type='领料出库'
+			AND source_doc_id IN (SELECT id FROM wms.stock_orders WHERE source_type='picking' AND source_doc_id=?)
+			ORDER BY material_id, id DESC`, ac.TenantID, wo.ID).Scan(&moves)
+		for _, mv := range moves {
+			lastBatch[mv.MaterialID] = mv.BatchNo
+		}
+	}
+
 	returned := map[int64]float64{}
 	for _, r := range rets {
 		returned[r.MaterialID] = r.Picked
 	}
-	wh, werr := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "raw")
-	if werr != nil {
+	lines2 := []wapi.CreateLine{}
+	wh, werr0 := client.WhByType(c.Request.Context(), ac.TenantID, ac.FactoryID, "raw")
+	if werr0 != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置原料仓"))
 		return
 	}
-	// Phase 3 ③A(2)：经 CoreWMSWriter 幂等建单（幂等键=return+WO）
-	lines2 := []wapi.CreateLine{}
-	// 批次物料退料需回原批次：取该工单最近一次领料出库流水的批次
-	lastBatch := map[int64]string{}
-	var moves []model.StockMovement
-	m.DB.Raw(`SELECT DISTINCT ON (material_id) material_id, batch_no
-		FROM wms.stock_movements WHERE tenant_id=? AND biz_type='领料出库'
-		AND source_doc_id IN (SELECT id FROM wms.stock_orders WHERE source_type='picking' AND source_doc_id=?)
-		ORDER BY material_id, id DESC`, ac.TenantID, wo.ID).Scan(&moves)
-	for _, mv := range moves {
-		lastBatch[mv.MaterialID] = mv.BatchNo
-	}
-
 	for _, r := range rows {
 		remain := r.Picked - returned[r.MaterialID]
 		if remain <= 1e-9 {
@@ -673,8 +690,8 @@ func (m *MesAPI) ReturnMaterial(c *gin.Context) {
 		response.Fail(c, werr3)
 		return
 	}
-	var order model.StockOrder
-	m.DB.First(&order, res2.OrderID)
+	order := model.StockOrder{ID: res2.OrderID, DocNo: res2.DocNo, DocType: model.DocRCV,
+		SourceType: "return", SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo, Remark: "工单退料"}
 	data.Audit(m.DB, ac, c.ClientIP(), "return-material", "work_order", wo.DocNo, wo.DocNo, "", order.DocNo)
 	response.OK2(c, order)
 }

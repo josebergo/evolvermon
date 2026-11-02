@@ -3,6 +3,8 @@
 package posting
 
 import (
+	"encoding/json"
+	"net/http"
 	"os"
 	"context"
 	"fmt"
@@ -26,6 +28,7 @@ type PostLine struct {
 	Qty        float64 `json:"qty"`
 	BatchNo    string  `json:"batchNo"`
 	LocationID *int64  `json:"locationId"`
+	MaterialID int64   `json:"materialId"` // 三库回写携带
 }
 
 func ApplyStockAt2(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line model.StockOrderLine, batch string, loc *int64, dirQty float64, direction, bucket, bizNote string) error {
@@ -125,6 +128,10 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 			if err := httpWB(os.Getenv("EM_ERP_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines)); err != nil {
 				return err
 			}
+			// 预占核销（wms 自域，三库在 wms 库执行）
+			tx.Model(&model.StockReservation{}).
+				Where("source_doc_type='sales_order' AND source_doc_id=? AND status='held'", order.SourceDocID).
+				Updates(map[string]any{"status": model.RvConsumed})
 			for _, l := range order.Lines {
 				mat, merr := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
 				if merr != nil || !mat.SerialManaged {
@@ -145,9 +152,11 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 			}
 		}
 		// 核销预占 + 状态推进
+		if os.Getenv("WB_NO_SN") != "1" {
 		tx.Model(&model.StockReservation{}).
 			Where("source_doc_type='sales_order' AND source_doc_id=? AND status='held'", order.SourceDocID).
 			Updates(map[string]any{"status": model.RvConsumed})
+		}
 		var so model.SalesOrder
 		if err := tx.First(&so, order.SourceDocID).Error; err == nil {
 			var remain int64
@@ -173,10 +182,21 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 		}
 
 	case "purchase":
-		if remoteErp || remoteMes {
-			u := os.Getenv("EM_ERP_URL")
-			if u == "" { u = os.Getenv("EM_MES_URL") }
-			return httpWB(u, os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
+		if remoteErp {
+			if err := httpWB(os.Getenv("EM_ERP_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines)); err != nil {
+				return err
+			}
+			// AutoQc（IQC 待检）经 mes 回写端点（其端点上下文会执行 AutoQc）
+			if remoteMes {
+				_ = httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
+			}
+			return nil
+		}
+		if remoteMes {
+			return httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
+		}
+		if os.Getenv("WB_NO_SN") == "1" {
+			return nil // erp 段已由 wms 远程分支经 erp 端点处理；AutoQc 同理
 		}
 		for _, pl := range lines {
 			var pol model.PurchaseOrderLine
@@ -195,7 +215,9 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 			tx.Model(&po).Updates(map[string]any{"status": st})
 		}
 		// M4：到货自动生成 IQC 待检单（FR-MES-042 来源自动化）
-		messvc.AutoQc(tx, ac, order, svcLinesIn(lines), model.QcIQC)
+		if os.Getenv("WB_NO_SN") != "1" {
+			messvc.AutoQc(tx, ac, order, svcLinesIn(lines), model.QcIQC)
+		}
 	case "picking":
 		if remoteMes {
 			return httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
@@ -264,8 +286,7 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 
 
 func FindSOLine(tx *gorm.DB, order model.StockOrder, pl PostLine) int64 {
-	var l model.StockOrderLine
-	tx.First(&l, pl.LineID)
+	l := model.StockOrderLine{ID: pl.LineID, MaterialID: pl.MaterialID}
 	var sol model.SalesOrderLine
 	tx.Where("sales_order_id=? AND material_id=?", order.SourceDocID, l.MaterialID).Order("line_no").First(&sol)
 	return sol.ID
@@ -273,8 +294,7 @@ func FindSOLine(tx *gorm.DB, order model.StockOrder, pl PostLine) int64 {
 
 
 func FindPOLine(tx *gorm.DB, order model.StockOrder, pl PostLine) int64 {
-	var l model.StockOrderLine
-	tx.First(&l, pl.LineID)
+	l := model.StockOrderLine{ID: pl.LineID, MaterialID: pl.MaterialID}
 	var pol model.PurchaseOrderLine
 	tx.Where("purchase_order_id=? AND material_id=?", order.SourceDocID, l.MaterialID).Order("line_no").First(&pol)
 	return pol.ID
@@ -315,16 +335,14 @@ func svcLinesIn(lines []PostLine) []messvc.PostLine {
 }
 
 func findSOLine(tx *gorm.DB, order model.StockOrder, pl PostLine) int64 {
-	var l model.StockOrderLine
-	tx.First(&l, pl.LineID)
+	l := model.StockOrderLine{ID: pl.LineID, MaterialID: pl.MaterialID}
 	var sol model.SalesOrderLine
 	tx.Where("sales_order_id=? AND material_id=?", order.SourceDocID, l.MaterialID).Order("line_no").First(&sol)
 	return sol.ID
 }
 
 func findPOLine(tx *gorm.DB, order model.StockOrder, pl PostLine) int64 {
-	var l model.StockOrderLine
-	tx.First(&l, pl.LineID)
+	l := model.StockOrderLine{ID: pl.LineID, MaterialID: pl.MaterialID}
 	var pol model.PurchaseOrderLine
 	tx.Where("purchase_order_id=? AND material_id=?", order.SourceDocID, l.MaterialID).Order("line_no").First(&pol)
 	return pol.ID
@@ -353,9 +371,7 @@ for _, pl := range lines {
 		if toLoc == nil {
 			toLoc = line.ToLocationID
 		}
-		hasIqc := tx.Model(&model.QcScheme{}).
-			Where("tenant_id=? AND material_id=? AND check_type='iqc'", ac.TenantID, line.MaterialID).
-			First(&model.QcScheme{}).Error == nil
+		hasIqc := iqcConfigured(tx, ac, line.MaterialID)
 
 		switch order.DocType {
 		case model.DocRCV:
@@ -484,4 +500,28 @@ func genSN(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, lines []
 		}
 	}
 	return nil
+}
+
+// iqcConfigured 物料是否配置 IQC 方案（共享库直查；三库拆分经 mes 端点）。
+func iqcConfigured(tx *gorm.DB, ac *middleware.AuthCtx, materialID int64) bool {
+	if mesURL := os.Getenv("EM_MES_URL"); mesURL != "" {
+		q, _ := http.NewRequest(http.MethodGet,
+			fmt.Sprintf("%s/internal/core/mes/has-iqc?tenantId=%d&materialId=%d", mesURL, ac.TenantID, materialID), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(q)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Data struct {
+				Has bool `json:"has"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out.Data.Has
+	}
+	return tx.Model(&model.QcScheme{}).
+		Where("tenant_id=? AND material_id=? AND check_type='iqc'", ac.TenantID, materialID).
+		First(&model.QcScheme{}).Error == nil
 }

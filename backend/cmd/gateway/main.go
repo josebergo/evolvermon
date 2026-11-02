@@ -33,9 +33,9 @@ var masterPrefixes = []string{"materials", "boms", "routings", "work-centers", "
 
 // erpPrefixes/mesPrefixes/wmsPrefixes core 三域细分（Phase 3 批2，EM_TOPO=split）：
 // 网关按域分流 core-erp/mes/wms；未配置 EM_ERP_URL 等时统一回落 core（单进程形态）。
-var erpPrefixes = []string{"sales-orders", "purchase-requests", "purchase-orders", "mrp"}
-var mesPrefixes = []string{"work-orders", "wo-operations", "production-reports", "qc-records", "qc-schemes", "defect-codes", "kanban", "dashboard", "trace", "print", "atp", "plan", "finance", "transfers", "group"}
-var wmsPrefixes = []string{"stocks", "stock-movements", "stock-orders", "stocktakings", "reservations"}
+var erpPrefixes = []string{"sales-orders", "purchase-requests", "purchase-orders", "mrp", "finance"}
+var mesPrefixes = []string{"work-orders", "wo-operations", "production-reports", "qc-records", "qc-schemes", "defect-codes", "kanban", "dashboard", "trace", "atp", "plan"}
+var wmsPrefixes = []string{"stocks", "stock-movements", "stock-orders", "stocktakings", "reservations", "print", "transfers"}
 
 type upstream struct {
 	name  string
@@ -116,6 +116,12 @@ func (g *gateway) pick(path string) *upstream {
 		return nil
 	}
 	rest := strings.TrimPrefix(path, "/api/v1/")
+	if strings.HasPrefix(rest, "print/work-orders") {
+		return g.coreMES
+	}
+	if strings.HasPrefix(rest, "print/stock-orders") {
+		return g.coreWMS
+	}
 	switch {
 	case rest == "ops" || strings.HasPrefix(rest, "ops/"):
 		return g.ops

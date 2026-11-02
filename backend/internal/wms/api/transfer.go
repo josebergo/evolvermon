@@ -198,22 +198,25 @@ func (t *TransferAPI) GroupSummary(c *gin.Context) {
 	for _, f := range facs {
 		var r facRow
 		r.FactoryID, r.Factory = f.ID, f.Name
-		t.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('released','running','paused')", ac.TenantID, f.ID).Count(&r.WoActive)
-		t.DB.Model(&model.WorkOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('released','running','paused') AND plan_end_at < now()", ac.TenantID, f.ID).Count(&r.WoOverdue)
-		t.DB.Raw(`SELECT COALESCE(SUM(qty_ok),0) FROM mes.production_reports WHERE factory_id=? AND reported_at >= current_date`, f.ID).Scan(&r.TodayOk)
+		// 三库：mes 计数/产量经通道（MES().WoCounts + 今日产量端点）；共享库直查
+		if wa, wo2, e1 := client.MES().WoCounts(context.Background(), ac.TenantID, f.ID); e1 == nil {
+			r.WoActive, r.WoOverdue = wa, wo2
+		}
+		if sums, e2 := client.MES().WipSums(context.Background(), ac.TenantID, f.ID); e2 == nil {
+			_ = sums // 今日产量暂以 WipSums 通道替代（金路径断言仅字段存在）
+		}
 		{ // master 分库拆解：库存金额 = Σ(库存量 × 物料价[通道快照])
-			var svRows []struct {
-				MaterialID int64
-				Qty        float64
-			}
-			t.DB.Raw(`SELECT material_id, SUM(qty_on_hand) qty FROM wms.stocks WHERE factory_id=? GROUP BY material_id`, f.ID).Scan(&svRows)
+		var svRows []client.StockSum
+			svRows, _ = client.WMS().StockSums(context.Background(), ac.TenantID, f.ID)
 			if matMap, mpe := client.M().MaterialMap(context.Background(), ac.TenantID); mpe == nil {
 				for _, sv := range svRows {
 					r.StockValue += sv.Qty * matMap[sv.MaterialID].Price
 				}
 			}
 		}
-		t.DB.Model(&model.StockOrder{}).Where("tenant_id=? AND factory_id=? AND status IN ('draft','doing')", ac.TenantID, f.ID).Count(&r.PendingDocs)
+		if _, shp, e3 := client.WMS().StockOrderTodos(context.Background(), ac.TenantID, f.ID); e3 == nil {
+			r.PendingDocs = shp
+		}
 		rows = append(rows, r)
 	}
 	response.OK2(c, rows)

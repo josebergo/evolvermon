@@ -20,7 +20,7 @@ fi
 if [ "${EM_KEEP_DB:-0}" != "1" ]; then
   echo "== 重置数据库 =="
   "$PGSQL/psql.exe" -h 127.0.0.1 -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='evolvermon' AND pid<>pg_backend_pid();" >/dev/null 2>&1
-  for db in evolvermon evolvermon_identity evolvermon_master evolvermon_integration evolvermon_ops; do
+  for db in evolvermon evolvermon_erp evolvermon_mes evolvermon_wms evolvermon_identity evolvermon_master evolvermon_integration evolvermon_ops; do
     "$PGSQL/psql.exe" -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS $db WITH (FORCE);" -c "CREATE DATABASE $db;" >/dev/null
   done
 fi
@@ -74,11 +74,11 @@ CORE_ENV_EXTRA="EM_IDENTITY_URL=http://127.0.0.1:8081 EM_INTERNAL_TOKEN=dev-inte
 if [ "${EM_TOPO:-mono}" = "split" ]; then
   echo "== split 拓扑：core-erp/mes/wms 三进程 =="
   go build -o core-erp.exe ./cmd/core-erp && go build -o core-mes.exe ./cmd/core-mes && go build -o core-wms.exe ./cmd/core-wms || exit 1
-  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8086" EM_MES_URL="http://127.0.0.1:8087" EM_WMS_URL="http://127.0.0.1:8088" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-erp.exe > .pids-core-erp.log 2>&1 &
+  EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_erp sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8086" EM_MIGRATE=1 EM_SEED_DEMO=false EM_MES_URL="http://127.0.0.1:8087" EM_WMS_URL="http://127.0.0.1:8088" EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-erp.exe > .pids-core-erp.log 2>&1 &
   sleep 2
-  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8087" EM_ERP_URL="http://127.0.0.1:8086" EM_WMS_URL="http://127.0.0.1:8088" EM_MIGRATE=0 EM_SEED_DEMO=false EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-mes.exe > .pids-core-mes.log 2>&1 &
+  EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_mes sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8087" EM_MIGRATE=1 EM_SEED_DEMO=true EM_ERP_URL="http://127.0.0.1:8086" EM_WMS_URL="http://127.0.0.1:8088" EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-mes.exe > .pids-core-mes.log 2>&1 &
   sleep 2
-  EM_DATABASE_DSN="$CORE_DSN" EM_HTTP_ADDR=":8088" EM_ERP_URL="http://127.0.0.1:8086" EM_MES_URL="http://127.0.0.1:8087" EM_MIGRATE=1 EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-wms.exe > .pids-core-wms.log 2>&1 &
+  EM_DATABASE_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_wms sslmode=disable TimeZone=Asia/Shanghai" EM_HTTP_ADDR=":8088" EM_ERP_URL="http://127.0.0.1:8086" EM_MES_URL="http://127.0.0.1:8087" EM_MIGRATE=1 EM_IDENTITY_URL="http://127.0.0.1:8081" EM_INTERNAL_TOKEN="dev-internal-token" EM_MASTER_URL="http://127.0.0.1:8085" ./core-wms.exe > .pids-core-wms.log 2>&1 &
   # 网关分流三上游 + core 指向 core-wms（兜底/内部 API）
   export EM_ERP_URL="http://127.0.0.1:8086" EM_MES_URL="http://127.0.0.1:8087" EM_WMS_URL="http://127.0.0.1:8088" EM_CORE_URL="http://127.0.0.1:8088"
   TOPO_SERVICES=""  # 三进程已直启（registry 提供观测条目）

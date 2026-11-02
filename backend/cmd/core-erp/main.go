@@ -33,7 +33,7 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 	if os.Getenv("EM_MIGRATE") != "0" {
-		if _, err := data.MigrateVersioned(db, "core"); err != nil {
+		if _, err := data.MigrateVersioned(db, "erp"); err != nil {
 			log.Fatalf("migrate failed: %v", err)
 		}
 	}

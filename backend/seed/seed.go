@@ -387,3 +387,16 @@ func seedWarehouses(db *gorm.DB, tenantID int64) error {
 	}
 	return nil
 }
+
+// RunErpDemo erp 库种子（三库形态；演示数据金路径自建，库种子无需表外数据）。
+func RunErpDemo(db *gorm.DB) error { return nil }
+
+// RunMesDemo mes 库种子：不良字典。
+func RunMesDemo(db *gorm.DB) error { seedDict(db, 1); return nil }
+
+// RunWmsDemo wms 库种子：期初库存（byCode 固定映射，DG-RAW=1）。
+func RunWmsDemo(db *gorm.DB) error {
+	byCode := map[string]int64{"FG-1000": 1, "SF-2000": 2, "RM-3001": 3, "RM-3002": 4, "RM-3003": 5, "RM-3004": 6}
+	seedCoreStock(db, 1, byCode, 1)
+	return nil
+}

@@ -3,6 +3,9 @@ package api
 // M4 财务对接：应收/应付凭证导出（对接用友/金蝶等的外部接口，本系统不自建总账）。
 
 import (
+	"os"
+	"net/http"
+	"io"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
 
@@ -30,6 +33,17 @@ type Voucher struct {
 
 // Vouchers 按日期区间导出销售发货（应收）与采购入库（应付）凭证。
 func (f *FinanceAPI) Vouchers(c *gin.Context) {
+	// 三库：凭证聚合 erp 单据+master 客商——转发 erp 进程；共享库直接执行
+	if erpURL := os.Getenv("EM_ERP_URL"); erpURL != "" {
+		q, _ := http.NewRequest(http.MethodGet, erpURL+"/api/v1/finance/vouchers?from="+c.Query("from")+"&to="+c.Query("to"), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(q); err == nil {
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			c.Data(http.StatusOK, "application/json", b)
+			return
+		}
+	}
 	ac := middleware.GetAuth(c)
 	from, to := c.DefaultQuery("from", time.Now().AddDate(0, -1, 0).Format("2006-01-02")),
 		c.DefaultQuery("to", time.Now().Format("2006-01-02"))

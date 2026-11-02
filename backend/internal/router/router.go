@@ -308,9 +308,9 @@ func registerCore(v1 *gin.RouterGroup, db *gorm.DB) {
 
 // registerERP erp 域：销售/采购/请购/MRP/计划/财务。
 func registerERP(v1 *gin.RouterGroup, db *gorm.DB) {
+	finance := &erpapi.FinanceAPI{DB: db}
 	erp := &erpapi.ErpAPI{DB: db}
 	mrp := &erpapi.MrpAPI{DB: db}
-	finance := &erpapi.FinanceAPI{DB: db}
 	_ = finance
 	// ---- ERP 交易 ----
 	crudRes[model.SalesOrder](v1, db, "erp:sales", "/sales-orders", crud.Options[model.SalesOrder]{
@@ -325,6 +325,7 @@ func registerERP(v1 *gin.RouterGroup, db *gorm.DB) {
 		},
 	})
 	act(v1, "erp:sales", "POST", "/sales-orders/:id/audit", erp.AuditSalesOrder)
+	act(v1, "erp:sales", "GET", "/finance/vouchers", finance.Vouchers)
 	act(v1, "erp:sales", "POST", "/sales-orders/:id/void", erp.VoidSalesOrder)
 	act(v1, "erp:sales", "POST", "/sales-orders/:id/create-shipment", erp.CreateShipment)
 
@@ -386,14 +387,9 @@ func registerMES(v1 *gin.RouterGroup, db *gorm.DB) {
 	act(v1, "mes:quality", "POST", "/qc-records/:id/audit", mes.AuditQc)
 	// M4：处置 + 成本 + 财务凭证
 	quality := &mesapi.QualityAPI{DB: db}
-	finance := &erpapi.FinanceAPI{DB: db}
 	act(v1, "mes:quality", "POST", "/qc-records/:id/dispose", quality.Dispose)
 	act(v1, "mes:workorder", "POST", "/work-orders/:id/costing", quality.Costing)
-	act(v1, "erp:sales", "GET", "/finance/vouchers", finance.Vouchers)
 	// M5：厂间调拨 + 集团视图
-	transfer := &wmsapi.TransferAPI{DB: db}
-	act(v1, "wms:stockorder", "POST", "/transfers", transfer.Create)
-	act(v1, "plt:perm", "GET", "/group/summary", transfer.GroupSummary)
 
 	act(v1, "mes:quality", "GET", "/trace/work-order/:id", mst.TraceWorkOrder)
 	// M3：生产计划域
@@ -420,6 +416,7 @@ func registerMES(v1 *gin.RouterGroup, db *gorm.DB) {
 
 // registerWMS wms 域：库存/出入库/盘点/预占/调拨/序列号。
 func registerWMS(v1 *gin.RouterGroup, db *gorm.DB) {
+	transfer := &wmsapi.TransferAPI{DB: db}
 	wms := &wmsapi.WmsAPI{DB: db}
 	// ---- WMS ----
 	act(v1, "wms:stock", "GET", "/stocks", wms.Stocks)
@@ -439,6 +436,8 @@ func registerWMS(v1 *gin.RouterGroup, db *gorm.DB) {
 	act(v1, "wms:stockorder", "POST", "/stocktakings/:id/start", wms.StartStocktaking)
 	act(v1, "wms:stockorder", "POST", "/stocktakings/:id/lines/:lineId", wms.CountLine)
 	act(v1, "wms:stockorder", "POST", "/stocktakings/:id/finish", wms.FinishStocktaking)
+	act(v1, "wms:stockorder", "POST", "/transfers", transfer.Create)
+	act(v1, "plt:perm", "GET", "/group/summary", transfer.GroupSummary)
 }
 
 // registerIntegration 生态域：webhook 出口/设备遥测/智能建议。

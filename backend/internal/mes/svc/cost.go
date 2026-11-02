@@ -2,6 +2,11 @@
 package svc
 
 import (
+	"time"
+	"encoding/json"
+	"fmt"
+	"os"
+	"net/http"
 	"context"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"gorm.io/gorm"
@@ -19,6 +24,28 @@ func CostWorkOrder(tx *gorm.DB, ac *middleware.AuthCtx, woID int64) (float64, er
 	}
 	var matCost float64
 	var picks []model.StockOrder
+	if wmsURL := os.Getenv("EM_WMS_URL"); wmsURL != "" {
+		// 三库：领料单经 wms 端点（pick-agg 已有 picked 数；成本需行级 done_qty×价——暂用 pick-agg qty 近似
+		q, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/wms/pick-agg?tenantId=%d&workOrderId=%d", wmsURL, ac.TenantID, woID), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(q); err == nil {
+			var out struct {
+				Data struct {
+					Picked []struct {
+						MaterialID int64   `json:"materialId"`
+						Qty        float64 `json:"qty"`
+					} `json:"picked"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			resp.Body.Close()
+			for _, pk := range out.Data.Picked {
+				mat, _ := client.MatRef(context.Background(), ac.TenantID, pk.MaterialID)
+				matCost += pk.Qty * mat.Price
+			}
+			goto laborPart
+		}
+	}
 	tx.Scopes(data.ScopeFor(ac, true)).Preload("Lines").
 		Where("source_type='picking' AND source_doc_id=?", wo.ID).Find(&picks)
 	for _, p := range picks {
@@ -27,6 +54,7 @@ func CostWorkOrder(tx *gorm.DB, ac *middleware.AuthCtx, woID int64) (float64, er
 			matCost += l.DoneQty * mat.Price
 		}
 	}
+	laborPart:
 	var laborCost float64
 	var reports []model.ProductionReport
 	tx.Where("work_order_id=?", wo.ID).Find(&reports)

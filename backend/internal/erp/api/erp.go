@@ -138,8 +138,8 @@ if werr != nil {
 		response.Fail(c, werr2)
 		return
 	}
-	var order model.StockOrder
-	e.DB.First(&order, res.OrderID)
+	order := model.StockOrder{ID: res.OrderID, DocNo: res.DocNo, DocType: model.DocSHP, SourceType: "sales",
+		SourceDocType: "sales_order", SourceDocID: so.ID, SourceDocNo: so.DocNo}
 	data.Audit(e.DB, ac, c.ClientIP(), "create-shipment", "stock_order", order.DocNo, "销售发货 " + so.DocNo, "", "")
 	response.OK2(c, order)
 }
@@ -267,8 +267,8 @@ if werr != nil {
 		response.Fail(c, werr2)
 		return
 	}
-	var order model.StockOrder
-	e.DB.First(&order, res.OrderID)
+	order := model.StockOrder{ID: res.OrderID, DocNo: res.DocNo, DocType: model.DocRCV, SourceType: "purchase",
+		SourceDocType: "purchase_order", SourceDocID: po.ID, SourceDocNo: po.DocNo}
 	_ = e.DB.Model(&model.PurchaseOrder{}).Where("id=?", po.ID).Update("status", model.StReceiving).Error
 	response.OK2(c, order)
 }

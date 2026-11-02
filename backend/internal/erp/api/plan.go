@@ -3,6 +3,10 @@ package api
 // M3 生产计划域：ATP 可承诺量、有限产能排产、甘特数据、派工看板（FR-ERP/PRD M3）。
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"net/http"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"math"
@@ -54,21 +58,54 @@ func (p *PlanAPI) Atp(c *gin.Context) {
 		Qty  float64
 		Date *time.Time
 	}
+	inTransit.Qty = 0
+	if erpURL := os.Getenv("EM_ERP_URL"); erpURL != "" {
+		q3, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/erp/intransit?tenantId=%d&factoryId=%d&materialId=%d", erpURL, ac.TenantID, ac.FactoryID, mid), nil)
+		q3.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(q3); err == nil {
+			var out3 struct {
+				Data struct {
+					Qty float64 `json:"qty"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out3)
+			resp.Body.Close()
+			inTransit.Qty = out3.Data.Qty
+		}
+	} else {
 	p.DB.Raw(`SELECT COALESCE(SUM(l.qty-l.received_qty),0) qty, MIN(l.delivery_date) date
 		FROM erp.purchase_order_lines l JOIN erp.purchase_orders po ON po.id=l.purchase_order_id
 		WHERE po.tenant_id=? AND po.factory_id=? AND l.material_id=? AND po.status IN ('arriving','receiving')`,
 		ac.TenantID, ac.FactoryID, matID).Scan(&inTransit)
+	}
 	// 在制：未完工工单剩余产出
 	p.DB.Model(&model.WorkOrder{}).Select("COALESCE(SUM(qty-good_qty),0) q").
 		Where("tenant_id=? AND factory_id=? AND material_id=? AND status IN ('released','running','paused')",
 			ac.TenantID, ac.FactoryID, matID).Scan(&a)
 	wip := a.Q
 	// 其他在手需求（其他已审核订单未发量）
+	demand := 0.0
+	if erpURL := os.Getenv("EM_ERP_URL"); erpURL != "" {
+		q, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/internal/core/erp/demand?tenantId=%d&materialId=%d", erpURL, ac.TenantID, mid), nil)
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(q); err == nil {
+			var out struct {
+				Data struct {
+					Qty float64 `json:"qty"`
+				} `json:"data"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			resp.Body.Close()
+			demand = out.Data.Qty
+		}
+	} else {
+	a.Q = 0
 	p.DB.Model(&model.SalesOrderLine{}).
 		Joins("JOIN erp.sales_orders so ON so.id = sales_order_lines.sales_order_id AND so.status IN ('audited','partial')").
 		Select("COALESCE(SUM(sales_order_lines.qty - sales_order_lines.shipped_qty),0) q").
 		Where("sales_order_lines.material_id = ?", matID).Scan(&a)
-	demand := a.Q
+		demand = a.Q
+	}
 
 	available := onHand - held + inTransit.Qty + wip - demand
 	earliest := time.Now()
@@ -268,8 +305,7 @@ func (p *PlanAPI) DispatchBoard(c *gin.Context) {
 		Status       string
 		QtyOk        float64
 	}
-	p.DB.Raw(`SELECT work_center_id, status, COALESCE(qty_ok,0) qty_ok FROM mes.wo_operations WHERE tenant_id=? AND factory_id=?`,
-		ac.TenantID, ac.FactoryID).Scan(&opRows)
+	opRows = wmsOpsFallback(p.DB, ac, opRows)
 	type agg struct {
 		waiting, assigned, running int64
 		doneToday                  float64
@@ -315,4 +351,21 @@ func woDue(w model.WorkOrder) time.Time {
 
 func truncateDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+// wmsOpsFallback DispatchBoard 工序读（core-mes 自域直查；其它进程库无 mes 表时空结果兜底）。
+func wmsOpsFallback(db *gorm.DB, ac *middleware.AuthCtx, cur []struct {
+	WorkCenterID int64
+	Status       string
+	QtyOk        float64
+}) []struct {
+	WorkCenterID int64
+	Status       string
+	QtyOk        float64
+} {
+	if os.Getenv("EM_MES_URL") == "" {
+		db.Raw(`SELECT work_center_id, status, COALESCE(qty_ok,0) qty_ok FROM mes.wo_operations WHERE tenant_id=? AND factory_id=?`,
+			ac.TenantID, ac.FactoryID).Scan(&cur)
+	}
+	return cur
 }
