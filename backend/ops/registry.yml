@@ -25,7 +25,18 @@ services:
     driver: none
   - name: core-mes
     url: http://127.0.0.1:8087
-    driver: none
+    driver: process
+    start: ./core-mes.exe
+    dir: .
+    env:
+      EM_HTTP_ADDR: ":8087"
+      EM_MIGRATE: "0"
+      EM_DATABASE_DSN: "host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_mes sslmode=disable TimeZone=Asia/Shanghai"
+      EM_ERP_URL: "http://127.0.0.1:8086"
+      EM_WMS_URL: "http://127.0.0.1:8088"
+      EM_IDENTITY_URL: "http://127.0.0.1:8081"
+      EM_INTERNAL_TOKEN: "dev-internal-token"
+      EM_MASTER_URL: "http://127.0.0.1:8085"
   - name: core-wms
     url: http://127.0.0.1:8088
     driver: none
