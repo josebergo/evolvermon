@@ -19,6 +19,8 @@ import (
 // WMSWriter wms 写通道。
 type WMSWriter interface {
 	CreateOrder(req wapi.CreateReq) (*wapi.CreateResult, error)
+	Reserve(req wapi.ReserveReq) error
+	Release(req wapi.ReleaseReq) error
 }
 
 type localWriter struct{ db *gorm.DB }
@@ -61,6 +63,39 @@ func (r *remoteWriter) CreateOrder(req wapi.CreateReq) (*wapi.CreateResult, erro
 	}
 	return &out.Data, nil
 }
+
+func (l *localWriter) Reserve(req wapi.ReserveReq) error { return wapi.Reserve(l.db, req) }
+func (l *localWriter) Release(req wapi.ReleaseReq) error { return wapi.Release(l.db, req) }
+
+func (r *remoteWriter) post(path string, in any) error {
+	body, _ := json.Marshal(in)
+	req, err := http.NewRequest(http.MethodPost, r.base+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", r.token)
+	resp, err := r.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("wms %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("wms %s: http %d", path, resp.StatusCode)
+	}
+	var out struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if out.Code != 0 {
+		return fmt.Errorf("wms %s: %s", path, out.Message)
+	}
+	return nil
+}
+
+func (r *remoteWriter) Reserve(req wapi.ReserveReq) error { return r.post("/internal/core/wms/reserve", req) }
+func (r *remoteWriter) Release(req wapi.ReleaseReq) error { return r.post("/internal/core/wms/release", req) }
 
 var (
 	writerOnce sync.Once

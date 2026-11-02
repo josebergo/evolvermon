@@ -52,16 +52,19 @@ func (e *ErpAPI) AuditSalesOrder(c *gin.Context) {
 	}
 	// 审核即软预占（FR：可用量口径 = 现有 − 预占，PRD OQ-1 假设已参数化为默认软预占）
 	now := time.Now()
+	// Phase 3 ③B-①：预占经 CoreWMSWriter（幂等=sales_order+SO），本地仅更新 SO（saga：先远端后本地）
+	rl := []wapi.ReserveLine{}
+	for _, l := range so.Lines {
+		rl = append(rl, wapi.ReserveLine{MaterialID: l.MaterialID, Qty: l.Qty, SourceLineID: l.ID})
+	}
+	if rerr := client.Writer().Reserve(wapi.ReserveReq{
+		TenantID: ac.TenantID, FactoryID: ac.FactoryID, BizType: "sales",
+		SourceDocType: "sales_order", SourceDocID: so.ID, Lines: rl,
+	}); rerr != nil {
+		response.Fail(c, rerr)
+		return
+	}
 	err = e.DB.Transaction(func(tx *gorm.DB) error {
-		for _, l := range so.Lines {
-			r := model.StockReservation{
-				TenantID: ac.TenantID, FactoryID: ac.FactoryID, MaterialID: l.MaterialID,
-				Qty: l.Qty, BizType: "sales", SourceDocType: "sales_order", SourceDocID: so.ID, SourceLineID: l.ID,
-			}
-			if err := tx.Create(&r).Error; err != nil {
-				return err
-			}
-		}
 		return tx.Model(&model.SalesOrder{}).Where("id=? AND version=?", so.ID, so.Version).
 			Updates(map[string]any{"status": model.StAudited, "audited_by": ac.UserID, "audited_at": now, "version": so.Version + 1}).Error
 	})
@@ -84,13 +87,9 @@ func (e *ErpAPI) VoidSalesOrder(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrBadState, "当前状态不可作废"))
 		return
 	}
+	// Phase 3 ③B-①：预占释放经 Writer（幂等），本地仅作废 SO
+	_ = client.Writer().Release(wapi.ReleaseReq{SourceDocType: "sales_order", SourceDocID: so.ID})
 	err = e.DB.Transaction(func(tx *gorm.DB) error {
-		// 释放未核销预占
-		if err := tx.Model(&model.StockReservation{}).
-			Where("source_doc_type='sales_order' AND source_doc_id=? AND status='held'", so.ID).
-			Updates(map[string]any{"status": model.RvReleased, "released_at": time.Now()}).Error; err != nil {
-			return err
-		}
 		return tx.Model(&model.SalesOrder{}).Where("id=? AND version=?", so.ID, so.Version).
 			Updates(map[string]any{"status": model.StVoid, "version": so.Version + 1}).Error
 	})

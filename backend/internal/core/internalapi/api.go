@@ -32,6 +32,8 @@ func (a *API) Register(r *gin.Engine) {
 	g.GET("/wms/stock-single", a.StockSingle)
 	g.GET("/wms/stockorder-todos", a.StockOrderTodos)
 	g.POST("/wms/create-order", a.WmsCreateOrder)
+	g.POST("/wms/reserve", a.WmsReserve)
+	g.POST("/wms/release", a.WmsRelease)
 	g.GET("/mes/wos", a.MesWorkOrders)
 	g.GET("/mes/wo-ops", a.MesWoOps)
 	g.GET("/mes/wo-counts", a.MesWoCounts)
@@ -199,6 +201,33 @@ func (a *API) WmsCreateOrder(c *gin.Context) {
 		return
 	}
 	response.OK2(c, res)
+}
+
+// WmsReserve/WmsRelease 预占建释放（erp 审核链）。
+func (a *API) WmsReserve(c *gin.Context) {
+	var req wapi.ReserveReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	if err := wapi.Reserve(a.DB, req); err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, gin.H{"ok": true})
+}
+
+func (a *API) WmsRelease(c *gin.Context) {
+	var req wapi.ReleaseReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	if err := wapi.Release(a.DB, req); err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, gin.H{"ok": true})
 }
 
 // MesWorkOrders 工单列表（erp 计划/MRP 经通道；statuses 逗号分隔可选）。
