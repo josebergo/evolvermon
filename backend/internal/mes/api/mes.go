@@ -3,6 +3,8 @@ package api
 // MES：工单生命周期、派工、报工（幂等）、质检（FR-MES-001~053；流程见 core-flows.md §2.2）。
 
 import (
+	"fmt"
+	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
 	"github.com/evolvermon/evolvermon/internal/client"
 	wmssvc "github.com/evolvermon/evolvermon/internal/wms/svc"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
@@ -308,29 +310,20 @@ func (m *MesAPI) FinishReceipt(c *gin.Context) {
 	if mat.BatchManaged {
 		batchNo = "B" + time.Now().Format("060102") + "-" + wo.DocNo[len(wo.DocNo)-4:]
 	}
-	docNo, _ := data.NextDocNo(m.DB, ac.TenantID, "RCV")
-	order := model.StockOrder{
-		DocType: model.DocRCV, WarehouseID: wh.ID, SourceType: "production",
+	// Phase 3 ③A(2)：经 CoreWMSWriter 幂等建单（幂等键=production+WO+行指纹）
+	res, werr2 := client.Writer().CreateOrder(wapi.CreateReq{
+		TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
+		DocType: "rcv", SourceType: "production",
 		SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo,
-	}
-	order.TenantID = ac.TenantID
-	order.FactoryID = &ac.FactoryID
-	order.DocNo = docNo
-	err := m.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&order).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(&model.StockOrderLine{
-			StockOrderID: order.ID, LineNo: 1, MaterialID: wo.MaterialID, Qty: wo.GoodQty, BatchNo: batchNo,
-		}).Error; err != nil {
-			return err
-		}
-		return nil
+		WarehouseID: wh.ID, IdemKey: fmt.Sprintf("production:%d:%v:%s", wo.ID, wo.GoodQty, batchNo),
+		Lines: []wapi.CreateLine{{MaterialID: wo.MaterialID, Qty: wo.GoodQty, BatchNo: batchNo}},
 	})
-	if err != nil {
-		response.Fail(c, err)
+	if werr2 != nil {
+		response.Fail(c, werr2)
 		return
 	}
+	var order model.StockOrder
+	m.DB.First(&order, res.OrderID)
 	response.OK2(c, order)
 }
 
@@ -656,15 +649,8 @@ func (m *MesAPI) ReturnMaterial(c *gin.Context) {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置原料仓"))
 		return
 	}
-	docNo, _ := data.NextDocNo(m.DB, ac.TenantID, "RCV")
-	order := model.StockOrder{
-		DocType: model.DocRCV, WarehouseID: wh.ID, SourceType: "return",
-		SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo,
-		Remark: "工单退料",
-	}
-	order.TenantID = ac.TenantID
-	order.FactoryID = &ac.FactoryID
-	order.DocNo = docNo
+	// Phase 3 ③A(2)：经 CoreWMSWriter 幂等建单（幂等键=return+WO）
+	lines2 := []wapi.CreateLine{}
 	// 批次物料退料需回原批次：取该工单最近一次领料出库流水的批次
 	lastBatch := map[int64]string{}
 	var moves []model.StockMovement
@@ -676,30 +662,26 @@ func (m *MesAPI) ReturnMaterial(c *gin.Context) {
 		lastBatch[mv.MaterialID] = mv.BatchNo
 	}
 
-	no := 0
-	err := m.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&order).Error; err != nil {
-			return err
+	for _, r := range rows {
+		remain := r.Picked - returned[r.MaterialID]
+		if remain <= 1e-9 {
+			continue
 		}
-		for _, r := range rows {
-			remain := r.Picked - returned[r.MaterialID]
-			if remain <= 1e-9 {
-				continue
-			}
-			no++
-			if err := tx.Create(&model.StockOrderLine{
-				StockOrderID: order.ID, LineNo: no, MaterialID: r.MaterialID, Qty: remain,
-				BatchNo: lastBatch[r.MaterialID],
-			}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		lines2 = append(lines2, wapi.CreateLine{MaterialID: r.MaterialID, Qty: remain, BatchNo: lastBatch[r.MaterialID]})
+	}
+	res2, werr3 := client.Writer().CreateOrder(wapi.CreateReq{
+		TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
+		DocType: "rcv", SourceType: "return",
+		SourceDocType: "work_order", SourceDocID: wo.ID, SourceDocNo: wo.DocNo,
+		WarehouseID: wh.ID, Remark: "工单退料", IdemKey: fmt.Sprintf("return:%d", wo.ID),
+		Lines: lines2,
 	})
-	if err != nil {
-		response.Fail(c, err)
+	if werr3 != nil {
+		response.Fail(c, werr3)
 		return
 	}
+	var order model.StockOrder
+	m.DB.First(&order, res2.OrderID)
 	data.Audit(m.DB, ac, c.ClientIP(), "return-material", "work_order", wo.DocNo, wo.DocNo, "", order.DocNo)
 	response.OK2(c, order)
 }

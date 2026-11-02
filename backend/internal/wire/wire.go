@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/evolvermon/evolvermon/internal/client"
+	"github.com/evolvermon/evolvermon/internal/wms/wapi"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/middleware"
 	"github.com/evolvermon/evolvermon/internal/model"
@@ -14,6 +15,7 @@ import (
 
 // Identity 启用 identity 远程通道（单号/审计/认证上下文）。幂等。
 func Identity() {
+	wapi.DocNo = data.NextDocNo // wapi 建单取号（data.NextDocNo 内部已含远程钩子；Lite=本地）
 	c := client.Identity()
 	if c == nil {
 		return

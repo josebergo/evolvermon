@@ -84,7 +84,7 @@ func (r *remoteWMS) StockSums(ctx context.Context, tenantID, factoryID int64) ([
 			List []StockSum `json:"list"`
 		} `json:"data"`
 	}
-	if err := r.fetch(ctx, fmt.Sprintf("/internal/wms/stock-sums?tenantId=%d&factoryId=%d", tenantID, factoryID), &out); err != nil {
+	if err := r.fetch(ctx, fmt.Sprintf("/internal/core/wms/stock-sums?tenantId=%d&factoryId=%d", tenantID, factoryID), &out); err != nil {
 		return nil, err
 	}
 	return out.Data.List, nil
@@ -96,7 +96,7 @@ func (r *remoteWMS) ReservedSums(ctx context.Context, tenantID, factoryID int64)
 			List []StockSum `json:"list"`
 		} `json:"data"`
 	}
-	if err := r.fetch(ctx, fmt.Sprintf("/internal/wms/reserved-sums?tenantId=%d&factoryId=%d", tenantID, factoryID), &out); err != nil {
+	if err := r.fetch(ctx, fmt.Sprintf("/internal/core/wms/reserved-sums?tenantId=%d&factoryId=%d", tenantID, factoryID), &out); err != nil {
 		return nil, err
 	}
 	return out.Data.List, nil
@@ -108,7 +108,7 @@ func (r *remoteWMS) StockSingle(ctx context.Context, tenantID, factoryID, materi
 			Qty float64 `json:"qty"`
 		} `json:"data"`
 	}
-	if err := r.fetch(ctx, fmt.Sprintf("/internal/wms/stock-single?tenantId=%d&factoryId=%d&materialId=%d", tenantID, factoryID, materialID), &out); err != nil {
+	if err := r.fetch(ctx, fmt.Sprintf("/internal/core/wms/stock-single?tenantId=%d&factoryId=%d&materialId=%d", tenantID, factoryID, materialID), &out); err != nil {
 		return 0, err
 	}
 	return out.Data.Qty, nil
@@ -121,7 +121,7 @@ func (r *remoteWMS) StockOrderTodos(ctx context.Context, tenantID, factoryID int
 			Shp int64 `json:"shp"`
 		} `json:"data"`
 	}
-	if err := r.fetch(ctx, fmt.Sprintf("/internal/wms/stockorder-todos?tenantId=%d&factoryId=%d", tenantID, factoryID), &out); err != nil {
+	if err := r.fetch(ctx, fmt.Sprintf("/internal/core/wms/stockorder-todos?tenantId=%d&factoryId=%d", tenantID, factoryID), &out); err != nil {
 		return 0, 0, err
 	}
 	return out.Data.Rcv, out.Data.Shp, nil

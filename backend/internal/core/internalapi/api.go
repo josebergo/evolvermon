@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"gorm.io/gorm"
 
@@ -30,6 +31,7 @@ func (a *API) Register(r *gin.Engine) {
 	g.GET("/wms/reserved-sums", a.ReservedSums)
 	g.GET("/wms/stock-single", a.StockSingle)
 	g.GET("/wms/stockorder-todos", a.StockOrderTodos)
+	g.POST("/wms/create-order", a.WmsCreateOrder)
 	g.GET("/mes/wos", a.MesWorkOrders)
 	g.GET("/mes/wo-ops", a.MesWoOps)
 	g.GET("/mes/wo-counts", a.MesWoCounts)
@@ -182,6 +184,21 @@ func (a *API) StockOrderTodos(c *gin.Context) {
 	a.DB.Raw(`SELECT COUNT(*) FROM wms.stock_orders WHERE tenant_id=? AND factory_id=? AND status IN ('draft','doing') AND doc_type='rcv'`, tenantID, factoryID).Scan(&rcv)
 	a.DB.Raw(`SELECT COUNT(*) FROM wms.stock_orders WHERE tenant_id=? AND factory_id=? AND status IN ('draft','doing') AND doc_type='shp'`, tenantID, factoryID).Scan(&shp)
 	response.OK2(c, gin.H{"rcv": rcv, "shp": shp})
+}
+
+// WmsCreateOrder 幂等建单（mes/erp 经 Writer 通道；幂等键入 Remark）。
+func (a *API) WmsCreateOrder(c *gin.Context) {
+	var req wapi.CreateReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	res, err := wapi.CreateOrder(a.DB, req)
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, res)
 }
 
 // MesWorkOrders 工单列表（erp 计划/MRP 经通道；statuses 逗号分隔可选）。

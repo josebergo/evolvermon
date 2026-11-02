@@ -3,6 +3,7 @@ package api
 // ERP 交易域：销售订单状态机/发货、请购转采购、采购到货（FR-ERP-050~068）。
 
 import (
+	"fmt"
 	"context"
 	"github.com/evolvermon/evolvermon/internal/pkg/conv"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/events"
@@ -259,33 +261,29 @@ if werr != nil {
 		response.Fail(c, response.NewBiz(response.ErrBiz, "未配置原料仓"))
 		return
 	}
-	docNo, _ := data.NextDocNo(e.DB, ac.TenantID, "RCV")
-	order := model.StockOrder{
-		DocType: model.DocRCV, WarehouseID: wh.ID, SourceType: "purchase",
-		SourceDocType: "purchase_order", SourceDocID: po.ID, SourceDocNo: po.DocNo,
+	// Phase 3 ③A(2)：经 CoreWMSWriter 幂等建单；本地更新 PO 状态（writeBack 反转）
+	lines2 := []wapi.CreateLine{}
+	for _, l := range po.Lines {
+		remain := l.Qty - l.ReceivedQty
+		if remain <= 0 {
+			continue
+		}
+		lines2 = append(lines2, wapi.CreateLine{MaterialID: l.MaterialID, Qty: remain, Price: l.Price})
 	}
-	order.TenantID = ac.TenantID
-	order.FactoryID = &ac.FactoryID
-	order.DocNo = docNo
-	err := e.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&order).Error; err != nil {
-			return err
-		}
-		for i, l := range po.Lines {
-			remain := l.Qty - l.ReceivedQty
-			if remain <= 0 {
-				continue
-			}
-			mat, _ := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
-			if err := tx.Create(&model.StockOrderLine{
-				StockOrderID: order.ID, LineNo: i + 1, MaterialID: l.MaterialID, Qty: remain, Price: l.Price,
-			}).Error; err != nil {
-				return err
-			}
-			_ = mat
-		}
-		return tx.Model(&model.PurchaseOrder{}).Where("id=?", po.ID).Update("status", model.StReceiving).Error
+	res, werr2 := client.Writer().CreateOrder(wapi.CreateReq{
+		TenantID: ac.TenantID, FactoryID: ac.FactoryID, UserID: ac.UserID,
+		DocType: "rcv", SourceType: "purchase",
+		SourceDocType: "purchase_order", SourceDocID: po.ID, SourceDocNo: po.DocNo,
+		WarehouseID: wh.ID, IdemKey: fmt.Sprintf("purchase:%d", po.ID),
+		Lines: lines2,
 	})
+	if werr2 != nil {
+		response.Fail(c, werr2)
+		return
+	}
+	var order model.StockOrder
+	e.DB.First(&order, res.OrderID)
+	err := e.DB.Model(&model.PurchaseOrder{}).Where("id=?", po.ID).Update("status", model.StReceiving).Error
 	if err != nil {
 		response.Fail(c, err)
 		return

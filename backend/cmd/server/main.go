@@ -84,6 +84,7 @@ func main() {
 	client.InitWMS(db) // core-wms 读通道（Lite=Local 直连）
 	client.InitCoreMes(db) // core 域间读通道（Local 直连）
 	client.InitCoreErp(db)
+	client.InitWMSWriter(db) // wms 写通道（Local 直连）
 
 	jm := jwtx.New(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTLHour, cfg.RefreshTTLDay)
 
