@@ -3,6 +3,7 @@
 package posting
 
 import (
+	"os"
 	"context"
 	"fmt"
 	"time"
@@ -113,8 +114,29 @@ func ApplyStockAt(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, l
 
 // writeBack 单据回写：销售已发量+订单状态、采购已入库量、工单领料量/入库状态。
 func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, lines []PostLine) error {
+	// Phase 3 ③B-③：Remote 模式（拆库）跨域段走端点；wms 自域段（SN 核销）始终本地
+	remoteErp := os.Getenv("EM_ERP_URL") != ""
+	remoteMes := os.Getenv("EM_MES_URL") != ""
+	_ = remoteErp
+	_ = remoteMes
 	switch order.SourceType {
 	case "sales":
+		if remoteErp {
+			if err := httpWB(os.Getenv("EM_ERP_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines)); err != nil {
+				return err
+			}
+			for _, l := range order.Lines {
+				mat, merr := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
+				if merr != nil || !mat.SerialManaged {
+					continue
+				}
+				tx.Model(&model.SerialNumber{}).
+					Where("tenant_id=? AND material_id=? AND status='in_stock'", ac.TenantID, l.MaterialID).
+					Order("id").Limit(int(l.DoneQty)).
+					Updates(map[string]any{"status": "out", "stock_order_id": order.ID, "updated_at": time.Now()})
+			}
+			return nil
+		}
 		// 按行回写已发量
 		for _, pl := range lines {
 			var sol model.SalesOrderLine
@@ -148,6 +170,11 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 				Updates(map[string]any{"status": "out", "stock_order_id": order.ID, "updated_at": time.Now()})
 		}
 	case "purchase":
+		if remoteErp || remoteMes {
+			u := os.Getenv("EM_ERP_URL")
+			if u == "" { u = os.Getenv("EM_MES_URL") }
+			return httpWB(u, os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
+		}
 		for _, pl := range lines {
 			var pol model.PurchaseOrderLine
 			if err := tx.Where("purchase_order_id=?", order.SourceDocID).First(&pol, FindPOLine(tx, order, pl)).Error; err == nil {
@@ -167,17 +194,31 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 		// M4：到货自动生成 IQC 待检单（FR-MES-042 来源自动化）
 		messvc.AutoQc(tx, ac, order, svcLinesIn(lines), model.QcIQC)
 	case "picking":
+		if remoteMes {
+			return httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
+		}
 		for _, pl := range lines {
 			tx.Model(&model.WorkOrder{}).Where("id=?", order.SourceDocID).
 				Update("picked_qty", gorm.Expr("picked_qty+?", pl.Qty))
 		}
 	case "return":
+		if remoteMes {
+			return httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
+		}
 		// A5 退料：冲减工单已领量（FR-MES-005）
 		for _, pl := range lines {
 			tx.Model(&model.WorkOrder{}).Where("id=?", order.SourceDocID).
 				Update("picked_qty", gorm.Expr("GREATEST(picked_qty-?, 0)", pl.Qty))
 		}
 	case "production":
+		if remoteMes {
+			// mes 段（WO stored/AutoQc/成本）远程；wms 自域 SN 生成本地执行
+			if err := httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines)); err != nil {
+				return err
+			}
+			genSN(tx, ac, order, lines)
+			return nil
+		}
 		// 完工入库：工单 → 已入库；FQC 待检自动生成；实际成本自动归集（M4）
 		tx.Model(&model.WorkOrder{}).Where("id=? AND status='finished'", order.SourceDocID).
 			Update("status", model.WoStored)
@@ -404,4 +445,37 @@ for _, pl := range lines {
 	// 业务回写（销售已发量 / 采购已入库量 / 工单状态与领料量）
 	return WriteBack(tx, ac, order, lines)
 	})
+}
+
+// genSN 完工入库序列号生成（wms 自域；Remote 分支调用，Local 段内联保留）。
+func genSN(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, lines []PostLine) error {
+	postedQty := map[int64]float64{}
+	for _, pl := range lines {
+		postedQty[pl.LineID] = postedQty[pl.LineID] + pl.Qty
+	}
+	for _, l := range order.Lines {
+		mat, merr := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
+		if merr != nil || !mat.SerialManaged {
+			continue
+		}
+		n := int(postedQty[l.ID])
+		if n < 0 {
+			n = 0
+		}
+		if n > 2000 {
+			n = 2000
+		}
+		for i := 1; i <= n; i++ {
+			sn := model.SerialNumber{
+				TenantID: ac.TenantID, FactoryID: ac.FactoryID, MaterialID: l.MaterialID,
+				Serial: "SN-" + order.DocNo + "-" + fmt.Sprintf("%04d", i),
+				BatchNo: l.BatchNo, WorkOrderID: order.SourceDocID, WorkOrderNo: order.SourceDocNo,
+				StockOrderID: order.ID, Status: "in_stock",
+			}
+			if err := tx.Create(&sn).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

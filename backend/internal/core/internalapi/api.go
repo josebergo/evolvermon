@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/evolvermon/evolvermon/internal/wms/posting"
 	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/client"
@@ -36,6 +37,7 @@ func (a *API) Register(r *gin.Engine) {
 	g.POST("/wms/reserve", a.WmsReserve)
 	g.POST("/wms/release", a.WmsRelease)
 	g.POST("/mes/create-wo", a.MesCreateWO)
+	g.POST("/write-back", a.WriteBackEp)
 	g.GET("/mes/wos", a.MesWorkOrders)
 	g.GET("/mes/wo-ops", a.MesWoOps)
 	g.GET("/mes/wo-counts", a.MesWoCounts)
@@ -226,6 +228,20 @@ func (a *API) WmsRelease(c *gin.Context) {
 		return
 	}
 	if err := wapi.Release(a.DB, req); err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, gin.H{"ok": true})
+}
+
+// WriteBackEp 过账回写端点（Phase 3 ③B-③：wms 过账事务内回写 erp/mes；source 分派）。
+func (a *API) WriteBackEp(c *gin.Context) {
+	var req posting.WBReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	if err := posting.WriteBackLocal(a.DB, req); err != nil {
 		response.Fail(c, err)
 		return
 	}
