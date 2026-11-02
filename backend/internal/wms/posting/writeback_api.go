@@ -137,7 +137,9 @@ func WriteBackLocal(db *gorm.DB, req WBReq) error {
 	if err := db.Preload("Lines").First(&order, req.OrderID).Error; err != nil {
 		return err
 	}
-	// 端点侧强制 Local 执行（清空远程 env，防嵌套转发）
+	// 端点侧强制 Local 执行（清空远程 env 防嵌套转发；WB_NO_SN=1 跳过 wms 自域 SN 段——由 core-wms 调用方执行）
+	os.Setenv("WB_NO_SN", "1")
+	defer os.Unsetenv("WB_NO_SN")
 	e1, e2 := os.Getenv("EM_ERP_URL"), os.Getenv("EM_MES_URL")
 	os.Setenv("EM_ERP_URL", "")
 	os.Setenv("EM_MES_URL", "")

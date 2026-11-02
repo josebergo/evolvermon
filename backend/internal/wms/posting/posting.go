@@ -159,6 +159,7 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 			tx.Model(&so).Updates(map[string]any{"status": st})
 		}
 		// 序列号核销：先进先出标记出库（M2 v1）
+		if os.Getenv("WB_NO_SN") != "1" {
 		for _, l := range order.Lines {
 			mat, merr := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)
 			if merr != nil || !mat.SerialManaged {
@@ -169,6 +170,8 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 				Order("id").Limit(int(l.DoneQty)).
 				Updates(map[string]any{"status": "out", "stock_order_id": order.ID, "updated_at": time.Now()})
 		}
+		}
+
 	case "purchase":
 		if remoteErp || remoteMes {
 			u := os.Getenv("EM_ERP_URL")
@@ -227,6 +230,9 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 		postedQty := map[int64]float64{}
 		for _, pl := range lines {
 			postedQty[pl.LineID] = postedQty[pl.LineID] + pl.Qty
+		}
+		if os.Getenv("WB_NO_SN") == "1" {
+			return nil // SN 由 core-wms 远程分支生成
 		}
 		for _, l := range order.Lines {
 			mat, merr := client.MatRef(context.Background(), ac.TenantID, l.MaterialID)

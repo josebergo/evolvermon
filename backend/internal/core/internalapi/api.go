@@ -3,6 +3,7 @@
 package internalapi
 
 import (
+	"github.com/evolvermon/evolvermon/internal/middleware"
 	"strings"
 	"time"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/evolvermon/evolvermon/internal/wms/posting"
 	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
 	"github.com/evolvermon/evolvermon/internal/data"
+	wmssvc "github.com/evolvermon/evolvermon/internal/wms/svc"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"gorm.io/gorm"
 
@@ -38,6 +40,8 @@ func (a *API) Register(r *gin.Engine) {
 	g.POST("/wms/release", a.WmsRelease)
 	g.POST("/mes/create-wo", a.MesCreateWO)
 	g.POST("/write-back", a.WriteBackEp)
+	g.POST("/wms/transfer-bucket", a.TransferBucketEp)
+	g.POST("/wms/release-pending", a.ReleasePendingEp)
 	g.GET("/mes/wos", a.MesWorkOrders)
 	g.GET("/mes/wo-ops", a.MesWoOps)
 	g.GET("/mes/wo-counts", a.MesWoCounts)
@@ -228,6 +232,73 @@ func (a *API) WmsRelease(c *gin.Context) {
 		return
 	}
 	if err := wapi.Release(a.DB, req); err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, gin.H{"ok": true})
+}
+
+// ReleasePendingEp 待检量转目标桶（mes quality 联动；wms 侧原子判定+转移）。
+func (a *API) ReleasePendingEp(c *gin.Context) {
+	var req struct {
+		TenantID    int64   `json:"tenantId"`
+		FactoryID   int64   `json:"factoryId"`
+		UserID      int64   `json:"userId"`
+		SourceDocID int64   `json:"sourceDocId"`
+		MaterialID  int64   `json:"materialId"`
+		BatchNo     string  `json:"batchNo"`
+		Qty         float64 `json:"qty"`
+		To          string  `json:"to"`
+		BizType     string  `json:"bizType"`
+		SrcNo       string  `json:"srcNo"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.MaterialID == 0 {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	var order model.StockOrder
+	if err := a.DB.First(&order, req.SourceDocID).Error; err != nil {
+		response.OK2(c, gin.H{"ok": false})
+		return
+	}
+	ac := &middleware.AuthCtx{TenantID: req.TenantID, FactoryID: req.FactoryID, UserID: req.UserID}
+	var stock model.Stock
+	if err := a.DB.Where("tenant_id=? AND factory_id=? AND warehouse_id=? AND material_id=? AND batch_no=?",
+		req.TenantID, req.FactoryID, order.WarehouseID, req.MaterialID, req.BatchNo).
+		First(&stock).Error; err != nil || stock.QtyPending < req.Qty-1e-9 {
+		response.OK2(c, gin.H{"ok": false}) // 无待检量：跳过
+		return
+	}
+	if err := wmssvc.TransferBucket(a.DB, ac, order.WarehouseID, model.StockOrderLine{MaterialID: req.MaterialID},
+		req.BatchNo, req.Qty, "pending", req.To, req.BizType, req.SrcNo); err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK2(c, gin.H{"ok": true})
+}
+
+// TransferBucketEp QC 桶间转移（mes quality 处置联动；Phase 3 ③B 收尾）。
+func (a *API) TransferBucketEp(c *gin.Context) {
+	var req struct {
+		TenantID   int64  `json:"tenantId"`
+		FactoryID  int64  `json:"factoryId"`
+		UserID     int64  `json:"userId"`
+		WarehouseID int64 `json:"warehouseId"`
+		MaterialID int64  `json:"materialId"`
+		BatchNo    string `json:"batchNo"`
+		Qty        float64 `json:"qty"`
+		From       string `json:"from"`
+		To         string `json:"to"`
+		BizType    string `json:"bizType"`
+		SrcNo      string `json:"srcNo"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.MaterialID == 0 {
+		response.Fail(c, response.NewBiz(response.ErrParam, err.Error()))
+		return
+	}
+	ac := &middleware.AuthCtx{TenantID: req.TenantID, FactoryID: req.FactoryID, UserID: req.UserID}
+	line := model.StockOrderLine{MaterialID: req.MaterialID}
+	if err := wmssvc.TransferBucket(a.DB, ac, req.WarehouseID, line, req.BatchNo, req.Qty, req.From, req.To, req.BizType, req.SrcNo); err != nil {
 		response.Fail(c, err)
 		return
 	}

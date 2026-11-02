@@ -3,6 +3,9 @@ package api
 // MES：工单生命周期、派工、报工（幂等）、质检（FR-MES-001~053；流程见 core-flows.md §2.2）。
 
 import (
+	"os"
+	"net/http"
+	"bytes"
 	"fmt"
 	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
 	"github.com/evolvermon/evolvermon/internal/client"
@@ -681,6 +684,21 @@ func (m *MesAPI) releasePending(ac *middleware.AuthCtx, rec model.QcRecord, to, 
 	if rec.SourceDocType != "stock_order" || rec.SourceDocID == 0 {
 		return
 	}
+	// Phase 3 ③B 收尾：EM_WMS_URL 时经 wms release-pending 端点（原子判定+转移）；共享库直查
+	if wmsURL := os.Getenv("EM_WMS_URL"); wmsURL != "" {
+		body, _ := json.Marshal(map[string]any{
+			"tenantId": ac.TenantID, "factoryId": ac.FactoryID, "userId": ac.UserID,
+			"sourceDocId": rec.SourceDocID, "materialId": rec.MaterialID,
+			"batchNo": rec.BatchNo, "qty": rec.Qty, "to": to, "bizType": bizType, "srcNo": rec.DocNo,
+		})
+		q, _ := http.NewRequest(http.MethodPost, wmsURL+"/internal/core/wms/release-pending", bytes.NewReader(body))
+		q.Header.Set("Content-Type", "application/json")
+		q.Header.Set("X-Internal-Token", os.Getenv("EM_INTERNAL_TOKEN"))
+		if resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(q); err == nil {
+			resp.Body.Close()
+		}
+		return
+	}
 	var order model.StockOrder
 	if err := m.DB.First(&order, rec.SourceDocID).Error; err != nil {
 		return
@@ -693,7 +711,7 @@ func (m *MesAPI) releasePending(ac *middleware.AuthCtx, rec model.QcRecord, to, 
 	if err := m.DB.Where("tenant_id=? AND factory_id=? AND warehouse_id=? AND material_id=? AND batch_no=?",
 		ac.TenantID, factoryID, order.WarehouseID, rec.MaterialID, rec.BatchNo).
 		First(&stock).Error; err != nil || stock.QtyPending < rec.Qty-1e-9 {
-		return // 无待检量：历史/非隔离路径，跳过
+		return
 	}
 	_ = wmssvc.TransferBucket(m.DB, ac, order.WarehouseID, model.StockOrderLine{MaterialID: rec.MaterialID},
 		rec.BatchNo, rec.Qty, "pending", to, bizType, rec.DocNo)
