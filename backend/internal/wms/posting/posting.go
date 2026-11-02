@@ -196,7 +196,9 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 			return httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
 		}
 		if os.Getenv("WB_NO_SN") == "1" {
-			return nil // erp 段已由 wms 远程分支经 erp 端点处理；AutoQc 同理
+			// 端点上下文（mes 库）：erp 段已由 wms 远程分支处理；AutoQc 为 mes 自域在此执行
+			messvc.AutoQc(tx, ac, order, svcLinesIn(lines), model.QcIQC)
+			return nil
 		}
 		for _, pl := range lines {
 			var pol model.PurchaseOrderLine
@@ -215,9 +217,7 @@ func WriteBack(tx *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, line
 			tx.Model(&po).Updates(map[string]any{"status": st})
 		}
 		// M4：到货自动生成 IQC 待检单（FR-MES-042 来源自动化）
-		if os.Getenv("WB_NO_SN") != "1" {
-			messvc.AutoQc(tx, ac, order, svcLinesIn(lines), model.QcIQC)
-		}
+		messvc.AutoQc(tx, ac, order, svcLinesIn(lines), model.QcIQC) // 端点（mes 库）与共享库均执行；wms 本地由远程分支跳过（此处不会到）
 	case "picking":
 		if remoteMes {
 			return httpWB(os.Getenv("EM_MES_URL"), os.Getenv("EM_INTERNAL_TOKEN"), wbReq(tx, ac, order, lines))
@@ -350,6 +350,15 @@ func findPOLine(tx *gorm.DB, order model.StockOrder, pl PostLine) int64 {
 
 // PostLinesTx 过账主事务（自 api.PostLines 抽取；/internal/wms 与 Local 通道共用）。
 func PostLinesTx(db *gorm.DB, ac *middleware.AuthCtx, order model.StockOrder, lines []PostLine) error {
+	// 行物料回填（三库回写携带 MaterialID）
+	for i := range lines {
+		var line0 model.StockOrderLine
+		if err := db.Where("stock_order_id=?", order.ID).First(&line0, lines[i].LineID).Error; err == nil {
+			lines[i].MaterialID = line0.MaterialID
+			lines[i].BatchNo = line0.BatchNo
+			lines[i].LocationID = line0.ToLocationID
+		}
+	}
 	return db.Transaction(func(tx *gorm.DB) error {
 for _, pl := range lines {
 		var line model.StockOrderLine

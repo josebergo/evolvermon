@@ -11,6 +11,8 @@ import (
 	"github.com/evolvermon/evolvermon/seed"
 	"github.com/evolvermon/evolvermon/internal/client"
 	"github.com/evolvermon/evolvermon/internal/config"
+	"github.com/evolvermon/evolvermon/internal/events"
+	"github.com/evolvermon/evolvermon/internal/outbox"
 	"github.com/evolvermon/evolvermon/internal/data"
 	"github.com/evolvermon/evolvermon/internal/infra"
 	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
@@ -46,6 +48,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("infra open failed: %v", err)
 	}
+	events.UseBroker(in.Broker)
+	outbox.StartRelay(db, in.Broker) // 三库：本域事件 relay
 	_ = in
 	client.InitDefaultMaster(db)
 	client.InitWMS(db)

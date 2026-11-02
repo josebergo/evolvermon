@@ -116,10 +116,10 @@ func (g *gateway) pick(path string) *upstream {
 		return nil
 	}
 	rest := strings.TrimPrefix(path, "/api/v1/")
-	if strings.HasPrefix(rest, "print/work-orders") {
+	if g.coreMES != nil && strings.HasPrefix(rest, "print/work-orders") {
 		return g.coreMES
 	}
-	if strings.HasPrefix(rest, "print/stock-orders") {
+	if g.coreWMS != nil && strings.HasPrefix(rest, "print/stock-orders") {
 		return g.coreWMS
 	}
 	switch {

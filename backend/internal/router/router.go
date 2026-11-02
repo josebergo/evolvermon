@@ -403,7 +403,6 @@ func registerMES(v1 *gin.RouterGroup, db *gorm.DB) {
 	printAPI := &mesapi.PrintAPI{DB: db}
 	act(v1, "mes:quality", "GET", "/trace/serial/:sn", traceAPI.Serial)
 	act(v1, "wms:stock", "GET", "/trace/batch/:no", traceAPI.Batch)
-	act(v1, "wms:stockorder", "GET", "/print/stock-orders/:id", printAPI.StockOrder)
 	act(v1, "mes:workorder", "GET", "/print/work-orders/:id", printAPI.WorkOrder)
 
 	// ---- 看板/工作台 ----
@@ -420,6 +419,8 @@ func registerWMS(v1 *gin.RouterGroup, db *gorm.DB) {
 	wms := &wmsapi.WmsAPI{DB: db}
 	// ---- WMS ----
 	act(v1, "wms:stock", "GET", "/stocks", wms.Stocks)
+	printW := &mesapi.PrintAPI{DB: db} // 送货单打印（查 wms 单据；三库归 wms）
+	act(v1, "wms:stockorder", "GET", "/print/stock-orders/:id", printW.StockOrder)
 	act(v1, "wms:stock", "GET", "/stocks/available", wms.Available)
 	act(v1, "wms:stock", "GET", "/stock-movements", wms.Movements)
 	act(v1, "wms:stock", "GET", "/reservations", wms.Reservations)

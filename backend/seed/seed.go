@@ -391,12 +391,25 @@ func seedWarehouses(db *gorm.DB, tenantID int64) error {
 // RunErpDemo erp 库种子（三库形态；演示数据金路径自建，库种子无需表外数据）。
 func RunErpDemo(db *gorm.DB) error { return nil }
 
-// RunMesDemo mes 库种子：不良字典。
-func RunMesDemo(db *gorm.DB) error { seedDict(db, 1); return nil }
+// RunMesDemo mes 库种子：不良字典 + IQC 方案（RM-3001=3 演示映射）。
+func RunMesDemo(db *gorm.DB) error { seedDict(db, 1); seedMesQc(db, 1, 3); return nil }
 
 // RunWmsDemo wms 库种子：期初库存（byCode 固定映射，DG-RAW=1）。
 func RunWmsDemo(db *gorm.DB) error {
 	byCode := map[string]int64{"FG-1000": 1, "SF-2000": 2, "RM-3001": 3, "RM-3002": 4, "RM-3003": 5, "RM-3004": 6}
 	seedCoreStock(db, 1, byCode, 1)
 	return nil
+}
+
+// seedMesQc mes 库种子：IQC 方案（RM-3001 全检；自 seedCoreStock 拆出）。
+func seedMesQc(db *gorm.DB, tenantID int64, rm3001ID int64) {
+	var n int64
+	db.Model(&model.QcScheme{}).Where("tenant_id=?", tenantID).Count(&n)
+	if n > 0 {
+		return
+	}
+	qcScheme := model.QcScheme{MaterialID: rm3001ID, CheckType: model.QcIQC, SampleRatio: 1,
+		Items: `[{"name":"外观","std":"无划伤","method":"目视"},{"name":"尺寸","std":"1.6±0.1mm","method":"卡尺"}]`}
+	qcScheme.TenantID = tenantID
+	db.Create(&qcScheme)
 }

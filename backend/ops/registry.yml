@@ -51,6 +51,9 @@ services:
       EM_HTTP_ADDR: ":8083"
       EM_MIGRATE: "1"
       EM_DATABASE_DSN: "host=127.0.0.1 port=5432 user=postgres password=postgres dbname=evolvermon_integration sslmode=disable TimeZone=Asia/Shanghai"
+      EM_ERP_URL: "http://127.0.0.1:8086"
+      EM_MES_URL: "http://127.0.0.1:8087"
+      EM_WMS_URL: "http://127.0.0.1:8088"
   - name: scheduler
     url: http://127.0.0.1:8084
     driver: process

@@ -32,6 +32,9 @@ func (a *API) Register(r *gin.Engine) {
 	g := r.Group("/internal/core", internalToken())
 	g.GET("/events", a.Events)
 	g.GET("/factory-check", a.FactoryCheck)
+	g.GET("/erp/mat-open-count", a.ErpMatOpenCount)
+	g.GET("/erp/demand", a.ErpDemand)
+	g.GET("/erp/intransit", a.ErpInTransit)
 	g.GET("/material-check", a.MaterialCheck)
 	g.GET("/insights", a.Insights)
 	g.GET("/wms/stock-sums", a.StockSums)
@@ -42,6 +45,7 @@ func (a *API) Register(r *gin.Engine) {
 	g.POST("/wms/reserve", a.WmsReserve)
 	g.POST("/wms/release", a.WmsRelease)
 	g.POST("/mes/create-wo", a.MesCreateWO)
+	g.GET("/mes/wo-open-count", a.MesWoOpenCount)
 	g.GET("/mes/has-iqc", a.HasIqc)
 	g.GET("/wms/pick-agg", a.PickAgg)
 	g.GET("/wms/trace-serial", a.TraceSerial)
@@ -577,17 +581,19 @@ func queryInt64(c *gin.Context, k string) int64 {
 	return v
 }
 
-// TraceSerial 按 SN 查序列号+关联流水（mes trace 经通道）。
+// TraceSerial 按 SN 查序列号+流水+工单（mes trace 经通道；响应结构与 TraceAPI.Serial 对齐）。
 func (a *API) TraceSerial(c *gin.Context) {
 	tenantID := queryInt64(c, "tenantId")
 	var sn model.SerialNumber
 	if err := a.DB.Where("tenant_id=? AND serial=?", tenantID, c.Query("sn")).First(&sn).Error; err != nil {
-		response.OK2(c, gin.H{"sn": nil})
+		response.OK2(c, gin.H{"serial": nil, "moves": []any{}, "workOrder": nil})
 		return
 	}
 	var moves []model.StockMovement
 	a.DB.Raw("SELECT * FROM wms.stock_movements WHERE batch_no=? ORDER BY id", sn.BatchNo).Scan(&moves)
-	response.OK2(c, gin.H{"sn": sn, "moves": moves})
+	var wo model.WorkOrder
+	a.DB.First(&wo, sn.WorkOrderID)
+	response.OK2(c, gin.H{"serial": sn, "moves": moves, "workOrder": wo})
 }
 
 // TraceBatch 按批次查流水。
@@ -630,4 +636,12 @@ func (a *API) ErpInTransit(c *gin.Context) {
 		WHERE po.tenant_id=? AND po.factory_id=? AND l.material_id=? AND po.status IN ('arriving','receiving')`,
 		tenantID, factoryID, matID).Scan(&out)
 	response.OK2(c, gin.H{"qty": out.Qty})
+}
+
+// MesWoOpenCount 工厂未结工单数（factory-check 经通道）。
+func (a *API) MesWoOpenCount(c *gin.Context) {
+	factoryID := queryInt64(c, "factoryId")
+	var n int64
+	a.DB.Raw("SELECT COUNT(*) FROM mes.work_orders WHERE factory_id=? AND deleted_at IS NULL AND status IN ('draft','released','running','paused','finished')", factoryID).Scan(&n)
+	response.OK2(c, gin.H{"n": n})
 }
