@@ -1,0 +1,83 @@
+name: Release
+
+# 镜像发布：tag v* 触发（多架构推 GHCR + Helm chart 附到 GitHub Release）；
+# workflow_dispatch 手动触发推 :main 开发镜像（验证发布链路用）。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      backend: ${{ steps.img.outputs.backend }}
+      web: ${{ steps.img.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 镜像名（owner 小写）
+        id: img
+        run: |
+          echo "backend=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/evolvermon"     >> "$GITHUB_OUTPUT"
+          echo "web=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/evolvermon-web" >> "$GITHUB_OUTPUT"
+      - name: 版本号（tag→vX.Y.Z；dispatch→main）
+        id: v
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else echo "version=main" >> "$GITHUB_OUTPUT"; fi
+      - name: Backend 镜像（amd64+arm64，单镜像含全部 10 个部署单元）
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.img.outputs.backend }}:${{ steps.v.outputs.version }}
+            ${{ steps.img.outputs.backend }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Web 镜像（amd64+arm64）
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.img.outputs.web }}:${{ steps.v.outputs.version }}
+            ${{ steps.img.outputs.web }}:latest
+          cache-from: type=gha
+
+  chart:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Package（appVersion 对齐发布镜像 tag）
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          sed -i "s/^appVersion: .*/appVersion: \"$V\"/" deploy/helm/evolvermon/Chart.yaml
+          mkdir dist
+          helm package deploy/helm/evolvermon -d dist
+      - name: Attach to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tgz --title "$GITHUB_REF_NAME" --generate-notes 2>/dev/null \
+            || gh release upload "$GITHUB_REF_NAME" dist/*.tgz --clobber

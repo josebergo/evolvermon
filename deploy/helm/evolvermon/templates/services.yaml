@@ -2,9 +2,9 @@
 {{- $svcs := list
   (dict "name" "gateway"       "cmd" "gateway"    "port" 8080 "db" ""            "replicas" .Values.gateway.replicas       "http" true  "ingress" true)
   (dict "name" "identity"      "cmd" "identity"   "port" 8081 "db" "identity"    "replicas" .Values.identity.replicas      "http" true  "ingress" false)
-  (dict "name" "core-erp"      "cmd" "server"     "port" 8086 "db" "erp"         "replicas" .Values.coreErp.replicas      "http" true  "ingress" false)
-  (dict "name" "core-mes"      "cmd" "server"     "port" 8087 "db" "mes"         "replicas" .Values.coreMes.replicas      "http" true  "ingress" false)
-  (dict "name" "core-wms"      "cmd" "server"     "port" 8088 "db" "wms"         "replicas" .Values.coreWms.replicas      "http" true  "ingress" false)
+  (dict "name" "core-erp"      "cmd" "core-erp"   "port" 8086 "db" "erp"         "replicas" .Values.coreErp.replicas      "http" true  "ingress" false)
+  (dict "name" "core-mes"      "cmd" "core-mes"   "port" 8087 "db" "mes"         "replicas" .Values.coreMes.replicas      "http" true  "ingress" false)
+  (dict "name" "core-wms"      "cmd" "core-wms"   "port" 8088 "db" "wms"         "replicas" .Values.coreWms.replicas      "http" true  "ingress" false)
   (dict "name" "master-data"   "cmd" "master-data" "port" 8085 "db" "master"     "replicas" .Values.masterData.replicas  "http" true  "ingress" false)
   (dict "name" "integration"   "cmd" "integration" "port" 8083 "db" "integration" "replicas" .Values.integration.replicas "http" true "ingress" false)
   (dict "name" "scheduler"     "cmd" "scheduler"  "port" 8084 "db" ""            "replicas" .Values.scheduler.replicas    "http" false "ingress" false)
@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
         - name: {{ $s.name }}
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           command: ["./{{ $s.cmd }}"]
           {{- if $s.http }}

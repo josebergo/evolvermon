@@ -1,7 +1,7 @@
 # EvolverMon Helm 默认值（deploy/helm/evolvermon/values.yaml）
 image:
-  repository: evolvermon/server   # 待推镜像仓库；本地构建可改 pullPolicy: Never + kind load
-  tag: "1.0.0"
+  repository: ghcr.io/josebergo/evolvermon   # release.yml 推 GHCR；本地构建可改 pullPolicy: Never + kind load
+  tag: ""   # 留空默认取 Chart appVersion（与 release.yml 发布的镜像 tag 一致）
   pullPolicy: IfNotPresent
 
 # 数据库：生产建议外部 PG16（internal=false + externalHost）；默认内置 PG 由 db-init Job 建八库
