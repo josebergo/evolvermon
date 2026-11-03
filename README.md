@@ -17,6 +17,16 @@ docker compose up -d --build
 # 打开 http://localhost —— 首次启动自动建表+写入演示数据（双工厂/物料/BOM/工艺/初始库存）
 ```
 
+### 部署形态（按需选择）
+
+| 形态 | 命令 | 适用 |
+|---|---|---|
+| **Lite 单进程**（默认） | `docker compose up -d` / `go run ./cmd/server` | 单机小工厂，零运维 |
+| Mono 五库 | `bash scripts/run-micro.sh`（本地）· `docker compose -f compose-micro.yml up` | 单机多服务隔离 |
+| **Split 八库微服务** | `EM_TOPO=split bash scripts/run-micro.sh` · [Helm chart](deploy/helm/evolvermon)（K8s） | 水平扩展/大客户 |
+
+九部署单元（gateway/identity/core-erp/mes/wms/master-data/integration/scheduler/ops-admin）+ 八库，跨域读写全走内部 API（幂等+补偿），统一管理平台 [ops-admin](docs/03-design/microservices-architecture.md) 管状态/启停/监控告警。详见 [微服务架构方案](docs/03-design/microservices-architecture.md)。
+
 ### 方式二：本地开发（前后端两个独立文件夹）
 
 ```bash

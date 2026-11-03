@@ -18,6 +18,16 @@ docker compose up -d --build
 # (two factories, materials, BOMs, routings, opening stock)
 ```
 
+### Deployment forms (choose one)
+
+| Form | Command | For |
+|---|---|---|
+| **Lite single binary** (default) | `docker compose up -d` / `go run ./cmd/server` | single-node, zero-ops |
+| Mono (5 DBs) | `bash scripts/run-micro.sh` · `docker compose -f compose-micro.yml up` | single-node isolation |
+| **Split microservices (8 DBs)** | `EM_TOPO=split bash scripts/run-micro.sh` · [Helm](deploy/helm/evolvermon) (K8s) | horizontal scale |
+
+Nine deploy units (gateway / identity / core-erp / mes / wms / master-data / integration / scheduler / ops-admin) + eight databases. Cross-domain access goes through internal APIs (idempotent + compensations). The unified ops platform manages status / start-stop / monitoring & alerting. See [architecture doc](docs/03-design/microservices-architecture.md).
+
 ### Option 2: Local development (backend and frontend in two separate folders)
 
 ```bash
