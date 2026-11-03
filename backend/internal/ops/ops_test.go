@@ -76,3 +76,50 @@ func TestNoneDriver(t *testing.T) {
 		t.Error("none driver 应拒绝 Stop")
 	}
 }
+
+// Phase 4 ①：规则引擎——down/p99/goroutine 触发与去重。
+func TestAlertRules(t *testing.T) {
+	st := ServiceState{ServiceDef: ServiceDef{Name: "x", URL: "http://x"}, Status: "down"}
+	for _, r := range alertRules {
+		if r.Name == "service_down" {
+			hit, detail := r.Check(&st, nil)
+			if !hit || detail == "" {
+				t.Fatalf("service_down 未触发: %v %q", hit, detail)
+			}
+		}
+	}
+	st2 := ServiceState{ServiceDef: ServiceDef{Name: "x"}, Status: "up", P99Bucket: 0.8}
+	for _, r := range alertRules {
+		if r.Name == "p99_high" {
+			if hit, _ := r.Check(&st2, nil); !hit {
+				t.Fatal("p99_high 未触发（0.8s>500ms 默认阈值）")
+			}
+		}
+	}
+	st3 := ServiceState{ServiceDef: ServiceDef{Name: "x"}, Status: "up", P99Bucket: 0.01}
+	for _, r := range alertRules {
+		if r.Name == "p99_high" {
+			if hit, _ := r.Check(&st3, nil); hit {
+				t.Fatal("p99_high 误触发（10ms）")
+			}
+		}
+	}
+	st4 := ServiceState{ServiceDef: ServiceDef{Name: "x"}, Status: "up", Goroutines: 5000}
+	for _, r := range alertRules {
+		if r.Name == "goroutine_leak" {
+			if hit, _ := r.Check(&st4, nil); !hit {
+				t.Fatal("goroutine_leak 未触发（5000>2000）")
+			}
+		}
+	}
+}
+
+func TestEnvFloat(t *testing.T) {
+	t.Setenv("EM_ALERT_P99_MS", "250")
+	if got := envFloat("EM_ALERT_P99_MS", 500); got != 250 {
+		t.Fatalf("envFloat=%v want 250", got)
+	}
+	if got := envFloat("EM_ALERT_MISSING_X", 500); got != 500 {
+		t.Fatalf("默认=%v want 500", got)
+	}
+}

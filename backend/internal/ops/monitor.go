@@ -119,10 +119,7 @@ func (m *Monitor) pollOne(ctx context.Context, name string) {
 		st.DownSince = ""
 	}
 	m.mu.Unlock()
-	// 告警生命周期：down 开单，up 解决（Phase 1 v1：service_down 规则）
-	if status == "down" && !wasDown {
-		m.openAlert(name, st.LastCheckAt)
-	}
+	// 恢复解决（up 后自动 resolve 该服务全部未恢复告警；开单由规则引擎 evaluateRules 统一处理）
 	if status == "up" && wasDown {
 		m.resolveAlert(name)
 	}
