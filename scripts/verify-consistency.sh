@@ -24,15 +24,26 @@ SO=$(curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bear
   "$BASE/sales-orders" | python -c "import sys,json;print(json.load(sys.stdin)['data']['id'])")
 curl -s -X POST -H "Authorization: Bearer $AT" "$BASE/sales-orders/$SO/audit" >/dev/null
 sleep 8  # 等 relay 一轮
-TOTAL=$("$PGSQL" -h 127.0.0.1 -U postgres -d evolvermon -t -A -c "SELECT count(*) FROM platform.outbox_messages")
-SENT=$("$PGSQL" -h 127.0.0.1 -U postgres -d evolvermon -t -A -c "SELECT count(*) FROM platform.outbox_messages WHERE sent_at IS NOT NULL")
-DEAD=$("$PGSQL" -h 127.0.0.1 -U postgres -d evolvermon -t -A -c "SELECT count(*) FROM platform.outbox_messages WHERE attempts>=5 AND sent_at IS NULL")
+# 拓扑无关：lite/mono 时 outbox 在 evolvermon 库；split 时散在 master/erp/mes/wms 四库——
+# 跨全部候选库求和，无该表的库计 0（2>/dev/null 吞掉 does-not-exist）。
+ALL_DBS="evolvermon evolvermon_identity evolvermon_master evolvermon_erp evolvermon_mes evolvermon_wms evolvermon_integration evolvermon_ops"
+qsum() { # qsum <sql> —— 跨库求和
+  local t=0 v d
+  for d in $ALL_DBS; do
+    v=$("$PGSQL" -h 127.0.0.1 -U postgres -d "$d" -t -A -c "$1" 2>/dev/null | head -1)
+    [ -n "$v" ] && t=$((t+v))
+  done
+  echo "$t"
+}
+TOTAL=$(qsum "SELECT count(*) FROM platform.outbox_messages")
+SENT=$(qsum "SELECT count(*) FROM platform.outbox_messages WHERE sent_at IS NOT NULL")
+DEAD=$(qsum "SELECT count(*) FROM platform.outbox_messages WHERE attempts>=5 AND sent_at IS NULL")
 [ "${TOTAL:-0}" -ge 1 ] && ok "事件落箱 $TOTAL 条" || bad "outbox 空"
 [ "$SENT" = "$TOTAL" ] && ok "relay 全部投递（$SENT/$TOTAL）" || bad "未投递 $((TOTAL-SENT)) 条"
 [ "${DEAD:-0}" = "0" ] && ok "无放弃投递（dead=0）" || bad "放弃 $DEAD 条"
 
 say "消费幂等"
-DUP=$("$PGSQL" -h 127.0.0.1 -U postgres -d evolvermon -t -A -c "SELECT count(*) FROM (SELECT consumer,message_id FROM platform.consumed_messages GROUP BY 1,2 HAVING count(*)>1) t")
+DUP=$(qsum "SELECT count(*) FROM (SELECT consumer,message_id FROM platform.consumed_messages GROUP BY 1,2 HAVING count(*)>1) t")
 [ "${DUP:-0}" = "0" ] && ok "幂等表无重复（唯一约束生效）" || bad "存在 $DUP 组重复"
 
 say "master-data 内部 API + MRP 读通道"

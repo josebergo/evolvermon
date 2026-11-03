@@ -9,10 +9,10 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/infra"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/infra"
+	"evolvermon/backend/internal/model"
 )
 
 // StartMrpTicker 定时自动 MRP（FR-ERP-077）：每 minutes 分钟逐工厂运行，阻塞直至 stop 关闭。

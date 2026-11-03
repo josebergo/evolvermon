@@ -11,9 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type AttachmentAPI struct{ DB *gorm.DB }

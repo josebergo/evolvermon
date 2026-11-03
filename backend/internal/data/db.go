@@ -13,9 +13,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
 )
 
 func Open(dsn string) (*gorm.DB, error) {

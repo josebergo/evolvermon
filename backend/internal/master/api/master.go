@@ -3,14 +3,14 @@ package api
 // 主数据扩展：BOM 树/环校验/启用切换、物料反查（FR-ERP-020~027）、工作台/看板/追溯。
 
 import (
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
+	"evolvermon/backend/internal/pkg/conv"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type MasterAPI struct{ DB *gorm.DB }

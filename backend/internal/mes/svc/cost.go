@@ -8,12 +8,12 @@ import (
 	"os"
 	"net/http"
 	"context"
-	"github.com/evolvermon/evolvermon/internal/client"
+	"evolvermon/backend/internal/client"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
 )
 
 // CostWorkOrder 计算并回写工单实际成本（可在事务内调用；完工入库过账时自动触发）。

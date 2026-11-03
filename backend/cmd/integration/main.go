@@ -9,16 +9,16 @@ import (
 	"os"
 	"time"
 
-	"github.com/evolvermon/evolvermon/internal/wire"
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/config"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/events"
-	"github.com/evolvermon/evolvermon/internal/integration/fanout"
-	"github.com/evolvermon/evolvermon/internal/infra"
-	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
-	"github.com/evolvermon/evolvermon/internal/pkg/logx"
-	"github.com/evolvermon/evolvermon/internal/router"
+	"evolvermon/backend/internal/wire"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/config"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/events"
+	"evolvermon/backend/internal/integration/fanout"
+	"evolvermon/backend/internal/infra"
+	"evolvermon/backend/internal/pkg/jwtx"
+	"evolvermon/backend/internal/pkg/logx"
+	"evolvermon/backend/internal/router"
 )
 
 func main() {

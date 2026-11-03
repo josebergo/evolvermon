@@ -3,16 +3,16 @@ package api
 // 工作台与看板（FR-MES-050~051、dashboard §7 API）。
 
 import (
-	"github.com/evolvermon/evolvermon/internal/client"
+	"evolvermon/backend/internal/client"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type BoardAPI struct{ DB *gorm.DB }

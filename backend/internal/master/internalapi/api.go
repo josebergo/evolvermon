@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 // BomEdge BOM 边（MRP 净需求展开输入：parent→child + 单耗 + 损耗率）。

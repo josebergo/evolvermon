@@ -3,18 +3,18 @@
 package api
 
 import (
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
+	"evolvermon/backend/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/jwtx"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type AuthAPI struct {

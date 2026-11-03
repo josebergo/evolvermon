@@ -14,7 +14,7 @@ import (
 
 	"gorm.io/gorm/schema"
 
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/model"
 )
 
 // migratedTypes 从 data.Migrate 源码提取 &model.X{} 清单（与 AutoMigrate 登记强绑定）。

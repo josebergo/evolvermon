@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evolvermon/evolvermon/internal/pkg/logx"
-	"github.com/evolvermon/evolvermon/internal/pkg/metrics"
+	"evolvermon/backend/internal/pkg/logx"
+	"evolvermon/backend/internal/pkg/metrics"
 )
 
 // identityPrefixes identity 域路径前缀（/api/v1 之后段）。

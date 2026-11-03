@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
-	"github.com/evolvermon/evolvermon/internal/pkg/logx"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/jwtx"
+	"evolvermon/backend/internal/pkg/logx"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 // Trace 链路追踪（NFR-050 + 微服务方案 Phase 0.4）：W3C traceparent 透传。

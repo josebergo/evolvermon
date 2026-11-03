@@ -6,12 +6,12 @@ package wire
 import (
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/wms/posting"
-	"github.com/evolvermon/evolvermon/internal/wms/wapi"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/wms/posting"
+	"evolvermon/backend/internal/wms/wapi"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
 )
 
 // Identity 启用 identity 远程通道（单号/审计/认证上下文）。幂等。

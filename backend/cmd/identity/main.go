@@ -8,15 +8,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/config"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/infra"
-	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
-	"github.com/evolvermon/evolvermon/internal/pkg/logx"
-	piapi "github.com/evolvermon/evolvermon/internal/platform/internalapi"
-	"github.com/evolvermon/evolvermon/internal/router"
-	"github.com/evolvermon/evolvermon/seed"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/config"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/infra"
+	"evolvermon/backend/internal/pkg/jwtx"
+	"evolvermon/backend/internal/pkg/logx"
+	piapi "evolvermon/backend/internal/platform/internalapi"
+	"evolvermon/backend/internal/router"
+	"evolvermon/backend/seed"
 )
 
 func main() {

@@ -4,8 +4,8 @@ package api
 // 模板内联避免外部资源依赖（NFR-023 离线工厂可用）。
 
 import (
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/pkg/conv"
 	"fmt"
 	"html"
 	"strings"
@@ -16,9 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
 )
 
 type PrintAPI struct{ DB *gorm.DB }

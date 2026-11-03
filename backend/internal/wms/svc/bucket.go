@@ -5,8 +5,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
 )
 
 // TransferBucket QC 联动桶间转移（FR-WMS-025/MES-043）：pending→on_hand / pending→defective。

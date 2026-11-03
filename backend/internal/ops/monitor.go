@@ -13,8 +13,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/model"
 )
 
 var dataEnsureSchemas = data.EnsureSchemas // 独立变量便于测试打桩

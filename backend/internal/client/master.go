@@ -16,8 +16,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/infra"
-	mapi "github.com/evolvermon/evolvermon/internal/master/internalapi"
+	"evolvermon/backend/internal/infra"
+	mapi "evolvermon/backend/internal/master/internalapi"
 )
 
 // MaterialLite 物料精简视图（覆盖 core 引用读所需全部字段）。

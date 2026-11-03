@@ -13,8 +13,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/outbox"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/outbox"
 )
 
 // Start 启动拉取循环（coreURL 为 core 服务基址；后台 goroutine）。

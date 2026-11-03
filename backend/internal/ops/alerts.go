@@ -17,7 +17,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/model"
 )
 
 // AlertRule 告警规则（内置，环境变量可调阈值；EM_ALERT_WEBHOOK 配置通知地址）。

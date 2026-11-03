@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"bytes"
 	"fmt"
-	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
-	"github.com/evolvermon/evolvermon/internal/client"
-	wmssvc "github.com/evolvermon/evolvermon/internal/wms/svc"
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
+	wapi "evolvermon/backend/internal/wms/wapi"
+	"evolvermon/backend/internal/client"
+	wmssvc "evolvermon/backend/internal/wms/svc"
+	"evolvermon/backend/internal/pkg/conv"
 	"encoding/json"
 	"strings"
 	"time"
@@ -19,11 +19,11 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/events"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/events"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type MesAPI struct{ DB *gorm.DB }

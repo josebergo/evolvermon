@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/model"
 )
 
 // ReserveLine 预占行。

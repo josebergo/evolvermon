@@ -11,15 +11,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/wire"
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/config"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/ops"
-	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
-	"github.com/evolvermon/evolvermon/internal/pkg/logx"
-	"github.com/evolvermon/evolvermon/internal/pkg/metrics"
+	"evolvermon/backend/internal/wire"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/config"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/ops"
+	"evolvermon/backend/internal/pkg/jwtx"
+	"evolvermon/backend/internal/pkg/logx"
+	"evolvermon/backend/internal/pkg/metrics"
 )
 
 func main() {

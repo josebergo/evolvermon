@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"github.com/evolvermon/evolvermon/internal/middleware"
+	"evolvermon/backend/internal/middleware"
 	"strings"
 	"time"
 	"net/http"
@@ -14,15 +14,15 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/evolvermon/evolvermon/internal/wms/posting"
-	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
-	"github.com/evolvermon/evolvermon/internal/data"
-	wmssvc "github.com/evolvermon/evolvermon/internal/wms/svc"
-	"github.com/evolvermon/evolvermon/internal/client"
+	"evolvermon/backend/internal/wms/posting"
+	wapi "evolvermon/backend/internal/wms/wapi"
+	"evolvermon/backend/internal/data"
+	wmssvc "evolvermon/backend/internal/wms/svc"
+	"evolvermon/backend/internal/client"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type API struct{ DB *gorm.DB }

@@ -13,7 +13,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/wms/wapi"
+	"evolvermon/backend/internal/wms/wapi"
 )
 
 // WMSWriter wms 写通道。

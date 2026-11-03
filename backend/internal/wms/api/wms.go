@@ -3,18 +3,18 @@ package api
 // WMS：库存过账（行级锁防超卖，core-flows.md §3）、可用量、流水、盘点（FR-WMS 全域）。
 
 import (
-	messvc "github.com/evolvermon/evolvermon/internal/mes/svc"
+	messvc "evolvermon/backend/internal/mes/svc"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/events"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/wms/posting"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/events"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/wms/posting"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type WmsAPI struct{ DB *gorm.DB }

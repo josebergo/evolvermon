@@ -15,9 +15,9 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/infra"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/outbox"
+	"evolvermon/backend/internal/infra"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/outbox"
 
 	"github.com/google/uuid"
 )

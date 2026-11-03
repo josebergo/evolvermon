@@ -3,17 +3,17 @@ package api
 // MRP：全量净需求计算（FR-ERP-070~077；算法见 core-flows.md §4，M1 简化版）。
 
 import (
-	"github.com/evolvermon/evolvermon/internal/client"
+	"evolvermon/backend/internal/client"
 	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type MrpAPI struct {

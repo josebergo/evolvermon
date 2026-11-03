@@ -5,19 +5,19 @@ package api
 import (
 	"fmt"
 	"context"
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
+	"evolvermon/backend/internal/pkg/conv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	wapi "github.com/evolvermon/evolvermon/internal/wms/wapi"
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/events"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	wapi "evolvermon/backend/internal/wms/wapi"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/events"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type ErpAPI struct{ DB *gorm.DB }

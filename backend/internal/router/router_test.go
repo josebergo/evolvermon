@@ -6,7 +6,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/pkg/jwtx"
+	"evolvermon/backend/internal/pkg/jwtx"
 )
 
 // TestRouteRegistration 无数据库环境下的装配冒烟测试：

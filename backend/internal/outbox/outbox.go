@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/infra"
-	"github.com/evolvermon/evolvermon/internal/model"
+	"evolvermon/backend/internal/infra"
+	"evolvermon/backend/internal/model"
 )
 
 // Save 写入投递箱（应在业务事务内调用，传 tx 保证原子）。

@@ -4,7 +4,7 @@ package api
 
 import (
 	"context"
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
+	"evolvermon/backend/internal/pkg/conv"
 	"fmt"
 	"time"
 
@@ -12,11 +12,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type TransferAPI struct{ DB *gorm.DB }

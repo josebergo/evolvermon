@@ -8,14 +8,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/config"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/infra"
-	"github.com/evolvermon/evolvermon/internal/wire"
-	"github.com/evolvermon/evolvermon/internal/pkg/logx"
-	"github.com/evolvermon/evolvermon/internal/pkg/metrics"
-	"github.com/evolvermon/evolvermon/internal/scheduler"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/config"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/infra"
+	"evolvermon/backend/internal/wire"
+	"evolvermon/backend/internal/pkg/logx"
+	"evolvermon/backend/internal/pkg/metrics"
+	"evolvermon/backend/internal/scheduler"
 )
 
 func main() {

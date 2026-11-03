@@ -3,19 +3,19 @@ package api
 // M4 质量与成本域：自动质检(IQC/FQC)、返工/报废处置、工单成本归集、财务凭证导出。
 
 import (
-	"github.com/evolvermon/evolvermon/internal/mes/svc"
-	"github.com/evolvermon/evolvermon/internal/pkg/conv"
+	"evolvermon/backend/internal/mes/svc"
+	"evolvermon/backend/internal/pkg/conv"
 	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/evolvermon/evolvermon/internal/client"
-	"github.com/evolvermon/evolvermon/internal/data"
-	"github.com/evolvermon/evolvermon/internal/middleware"
-	"github.com/evolvermon/evolvermon/internal/model"
-	"github.com/evolvermon/evolvermon/internal/pkg/response"
+	"evolvermon/backend/internal/client"
+	"evolvermon/backend/internal/data"
+	"evolvermon/backend/internal/middleware"
+	"evolvermon/backend/internal/model"
+	"evolvermon/backend/internal/pkg/response"
 )
 
 type QualityAPI struct{ DB *gorm.DB }
