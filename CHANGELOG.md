@@ -2,6 +2,15 @@
 
 里程碑（M1–M6）与功能清单。每个 M 均以 `scripts/verify-golden-path.sh` 端到端验证通过为发布门槛。
 
+## v1.0.1（工程收口：模块本地化 + 镜像发布流水线 + Helm chart 五处修复）
+- **Go 模块路径本地化**：`github.com/evolvermon/evolvermon` → `evolvermon/backend`（go.mod + 55 个 .go 文件），项目自身代码 import 不再指向 github 仓库
+- **镜像发布流水线**：`release.yml`——tag `v*` 触发 buildx amd64+arm64 推 GHCR（backend 单镜像含全部 10 个部署单元 + web 镜像）+ chart package 附 GitHub Release；`workflow_dispatch` 推 `:main` 供链路验证
+- **CI 新增两作业**：helm（lint + 渲染冒烟：8 Deployment/1 StatefulSet/core-wms command 断言）· docker（前后端镜像构建不推送，每次 push 验证 Dockerfile）
+- **Helm chart 五处真 bug 修复**（CI helm lint 首跑即全部抓出，此前从未渲染验证过）：① core-erp/mes/wms `cmd` 误写 `server`（lite 单体）→ 各自 split 二进制 ② labels 助手 dict 上下文 `.Release` nil pointer → `.root.Release` ③ ingress 引用不存在的 `gateway.service.port` → 定死 8080 ④ hpa `target` 流式映射多余右括号 → 块式 ⑤ Service `spec:` 后 `{{-` 吞换行致 `spec:type: ClusterIP` 单行解析必败 → 去横线；headless `clusterIP: "None"` 加引号
+- **backend/Dockerfile 重写**：10 个部署单元二进制全量构建（补 core-erp/mes/wms/master-data）+ `WORKDIR /usr/local/bin` 对齐 chart `./<cmd>` + TARGETARCH 多架构
+- verify-consistency.sh 拓扑无关化：outbox/幂等统计跨 8 库聚合（split 下表在 master/erp/mes/wms 四库，原脚本写死 evolvermon 库致 split 误报）
+- 验证：CI 五作业全绿（backend/helm/frontend/docker/e2e 金路径）；Release dispatch 实推 GHCR 成功
+
 ## v1.0.0（微服务架构演进完成：九进程八库 + 统一管理平台 + K8s）
 [微服务架构方案](docs/03-design/microservices-architecture.md) 全部落地（Phase 0→4），**Lite 单进程形态永久保留且为默认**——小工厂一键部署体验不变：
 - **八库拓扑**：evolvermon{,_identity,_master,_erp,_mes,_wms,_integration,_ops} 各自独立 DB；跨域读写全通道化（20+ 内部端点：identity 5 / master 10 / core 15+）
