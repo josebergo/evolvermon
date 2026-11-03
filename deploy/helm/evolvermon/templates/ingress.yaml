@@ -16,5 +16,5 @@ spec:
             backend:
               service:
                 name: {{ .Release.Name }}-gateway
-                port: { number: {{ .Values.gateway.service.port }} } }
+                port: { number: 8080 } }  # 与 $svcs 网关端口设计一致
 {{- end }}
