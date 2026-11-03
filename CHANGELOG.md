@@ -2,6 +2,16 @@
 
 里程碑（M1–M6）与功能清单。每个 M 均以 `scripts/verify-golden-path.sh` 端到端验证通过为发布门槛。
 
+## v1.0.0（微服务架构演进完成：九进程八库 + 统一管理平台 + K8s）
+[微服务架构方案](docs/03-design/microservices-architecture.md) 全部落地（Phase 0→4），**Lite 单进程形态永久保留且为默认**——小工厂一键部署体验不变：
+- **八库拓扑**：evolvermon{,_identity,_master,_erp,_mes,_wms,_integration,_ops} 各自独立 DB；跨域读写全通道化（20+ 内部端点：identity 5 / master 10 / core 15+）
+- **九部署单元**：gateway / identity / core-erp / core-mes / core-wms / master-data / integration / scheduler / ops-admin（EM_ROLES 域注册；EM_TOPO=split|mono 切换）
+- **saga 写链**（幂等键+补偿+对账）：建单×5（wapi.CreateOrder）/ 预占 Reserve/Release / 转工单 CreateWO / 过账回写 write-back / 待检转移
+- **统一管理平台 ops-admin**：注册表/健康聚合/启停（process·compose·k8s 三驱动）/ 指标 24h/P99·失败率·泄漏告警（webhook 通知）/ 运维审计
+- **可观测**：/healthz /readyz /metrics 全服务标配 + W3C traceparent 贯穿 + outbox 事件链（多库 relay+幂等）
+- **K8s**：deploy/helm/evolvermon（8 服务+Ingress+HPA+八库 init Job）；ops-admin k8s driver（scale/rollout）
+- **验收资产六套**：金路径 64/64 三形态 + verify-ops 17/17 + verify-consistency 9/9 + verify-split-fault 11/11（故障注入）+ load-report P99=29ms + load-micro 500 并发零错误 365/s
+
 ## v0.10.0（Phase 2 第一批 · 主数据服务化 + 事件一致性底座）
 - **cmd/master-data**（:8085）：主数据域独立进程（物料/BOM/工艺/工作中心/客商）+ `/internal/master/*` 批量读 API（X-Internal-Token 服务间认证）；网关 materials/boms/routings/work-centers/customers/suppliers 分流
 - **internal/client 读通道**：MasterData 接口双实现——Local（Lite 直连共享库，行为不变）/ Remote（HTTP + infra.Cache 缓存 TTL 60s）；**MRP BOM 展开试点改走读通道**（执行方案 2.4）
