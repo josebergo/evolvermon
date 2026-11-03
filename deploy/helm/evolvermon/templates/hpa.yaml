@@ -1,0 +1,23 @@
+{{/* HPA：工作负载域（gateway/identity/core-*）；master/integration/scheduler/ops 固定副本 */}}
+{{- if .Values.autoscaling.enabled }}
+{{- $hpaTargets := list "gateway" "identity" "core-erp" "core-mes" "core-wms" }}
+{{- range $name := $hpaTargets }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $.Release.Name }}-{{ $name }}
+  minReplicas: {{ $.Values.autoscaling.minReplicas }}
+  maxReplicas: {{ $.Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ $.Values.autoscaling.cpuTarget }} } }
+{{- end }}
+{{- end }}

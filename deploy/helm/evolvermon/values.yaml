@@ -1,0 +1,46 @@
+# EvolverMon Helm 默认值（deploy/helm/evolvermon/values.yaml）
+image:
+  repository: evolvermon/server   # 待推镜像仓库；本地构建可改 pullPolicy: Never + kind load
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+# 数据库：生产建议外部 PG16（internal=false + externalHost）；默认内置 PG 由 db-init Job 建八库
+postgresql:
+  internal: true
+  host: ""                     # internal=false 时必填（各服务库名自动派生）
+  auth:
+    user: evolver
+    password: change-me
+
+internalToken: change-me-internal
+jwtSecret: change-me-jwt-64-chars-random-string
+seedDemo: "false"
+
+gateway:
+  replicas: 2
+  ingress:
+    enabled: true
+    className: nginx
+    host: erp.example.com
+
+identity:    { replicas: 2 }
+coreErp:     { replicas: 2 }
+coreMes:     { replicas: 2 }
+coreWms:     { replicas: 2 }
+masterData:  { replicas: 2 }
+integration: { replicas: 1 }
+scheduler:   { replicas: 1 }
+opsAdmin:    { replicas: 1 }     # 管理面仅内网
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  cpuTarget: 70
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits:   { cpu: "1",  memory: 512Mi }
+
+alertWebhook: ""
+mrpAutoMinutes: "30"

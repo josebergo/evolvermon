@@ -32,6 +32,8 @@ func NewDriver(kind string) Driver {
 		return &ProcessDriver{}
 	case "compose":
 		return &ComposeDriver{}
+	case "k8s":
+		return &K8sDriver{}
 	case "none", "":
 		return &NoneDriver{}
 	default:
@@ -199,3 +201,55 @@ func killTree(pid int) error {
 	}
 	return p.Kill()
 }
+
+// ---- k8s ----（Phase 4 ②：K8s 形态启停=scale 0/恢复=scale 回原副本数；rollout restart）
+
+// K8sDriver 经 kubectl CLI（RBAC 服务账号授权 Deployment scale/get；容器内无 kubectl 时不可用 → fail-fast）。
+type K8sDriver struct{}
+
+func (d *K8sDriver) resName(service string) string {
+	return "deployment/" + os.Getenv("EM_K8S_NAMESPACE_PREFIX") + service // helm release 名前缀
+}
+
+func (d *K8sDriver) scale(ctx context.Context, service string, n int) error {
+	if os.Getenv("EM_K8S_ENABLED") != "1" {
+		return fmt.Errorf("k8s driver 需 EM_K8S_ENABLED=1（RBAC 授权 + kubectl 可用）")
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", "scale", d.resName(service), "--replicas="+strconv.Itoa(n))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("kubectl scale %s: %v: %s", service, err, out)
+	}
+	return nil
+}
+
+func (d *K8sDriver) current(ctx context.Context, service string) (int, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", d.resName(service), "-o", "jsonpath={.spec.replicas}")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(out)))
+}
+
+func (d *K8sDriver) Start(ctx context.Context, def ServiceDef) error {
+	n, err := d.current(ctx, def.Name)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		n = 1
+	}
+	return d.scale(ctx, def.Name, n) // 从 0 恢复：置 1（HPA 会接管扩容）
+}
+func (d *K8sDriver) Stop(ctx context.Context, def ServiceDef) error   { return d.scale(ctx, def.Name, 0) }
+func (d *K8sDriver) Restart(ctx context.Context, def ServiceDef) error {
+	if os.Getenv("EM_K8S_ENABLED") != "1" {
+		return fmt.Errorf("k8s driver 需 EM_K8S_ENABLED=1")
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", "rollout", "restart", d.resName(def.Name))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("kubectl rollout restart %s: %v: %s", def.Name, err, out)
+	}
+	return nil
+}
+func (*K8sDriver) Kind() string { return "k8s" }

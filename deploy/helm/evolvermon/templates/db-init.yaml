@@ -1,0 +1,29 @@
+{{/* 内置 PG：一次性建八库 initContainer（生产建议外部 PG） */}}
+{{- if .Values.postgresql.internal }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-db-init
+  labels: {{- include "evolvermon.labels" (dict "root" $ "svc" "db-init") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: psql
+          image: postgres:16-alpine
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              for db in evolvermon evolvermon_identity evolvermon_master evolvermon_erp evolvermon_mes evolvermon_wms evolvermon_integration evolvermon_ops; do
+                psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.user }} -tc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 || \
+                psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.user }} -c "CREATE DATABASE $db"
+              done
+          env:
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.password | quote }}
+{{- end }}

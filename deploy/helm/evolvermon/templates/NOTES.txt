@@ -1,0 +1,13 @@
+EvolverMon 已部署（{{ .Release.Name }}）。
+
+{{- if .Values.gateway.ingress.enabled }}
+访问入口: http{{ if false }}s{{ end }}://{{ .Values.gateway.ingress.host }}
+{{- else }}
+网关服务: {{ .Release.Name }}-gateway (port-forward: kubectl port-forward svc/{{ .Release.Name }}-gateway 8080:80)
+{{- end }}
+
+管理面（仅内网）: kubectl port-forward svc/{{ .Release.Name }}-ops-admin 8180:8180
+
+首次部署：identity 自动迁移+种子（EM_MIGRATE=1）；数据库由 db-init Job 创建八库。
+
+验证: 进入任一 core pod 执行金路径脚本，或对外经网关跑 scripts/verify-golden-path.sh http://<host>

@@ -1,0 +1,20 @@
+{{/* 网关 Ingress（唯一对外入口；ops-admin 不对外） */}}
+{{- if .Values.gateway.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-gateway
+  labels: {{- include "evolvermon.labels" (dict "root" $ "svc" "gateway") | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.gateway.ingress.className }}
+  rules:
+    - host: {{ .Values.gateway.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-gateway
+                port: { number: {{ .Values.gateway.service.port }} } }
+{{- end }}
