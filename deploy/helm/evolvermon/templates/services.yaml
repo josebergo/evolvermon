@@ -130,7 +130,7 @@ metadata:
   name: {{ $.Release.Name }}-{{ $s.name }}
   labels: {{- include "evolvermon.labels" (dict "root" $ "svc" $s.name) | nindent 4 }}
 spec:
-  {{- if $s.http }}type: ClusterIP{{ else }}clusterIP: None{{ end }}
+  {{ if $s.http }}type: ClusterIP{{ else }}clusterIP: "None"{{ end }}
   selector: {{- include "evolvermon.labels" (dict "root" $ "svc" $s.name) | nindent 4 }}
   ports:
     - port: {{ $s.port }}
