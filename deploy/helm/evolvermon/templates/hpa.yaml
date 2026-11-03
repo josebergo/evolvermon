@@ -18,6 +18,8 @@ spec:
     - type: Resource
       resource:
         name: cpu
-        target: { type: Utilization, averageUtilization: {{ $.Values.autoscaling.cpuTarget }} } }
+        target:
+          type: Utilization
+          averageUtilization: {{ $.Values.autoscaling.cpuTarget }}
 {{- end }}
 {{- end }}
