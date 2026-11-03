@@ -6,7 +6,7 @@
 {{/* 服务通用标签 */}}
 {{- define "evolvermon.labels" -}}
 app.kubernetes.io/name: evolvermon-{{ .svc }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/instance: {{ .root.Release.Name }}
 app.kubernetes.io/part-of: evolvermon
 {{- end -}}
 
